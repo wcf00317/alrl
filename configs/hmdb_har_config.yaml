@@ -1,0 +1,56 @@
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: hmdb_exp
+al_algorithm: dqn
+
+# 数据处理
+input_size: 112
+scale_size: 128
+train_batch_size: 32
+val_batch_size: 8
+num_each_iter: 5
+
+# 路径加载控制
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null
+snapshot: 0
+checkpointer: 1
+test: false
+final_test: false
+only_last_labeled: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.01
+lr_dqn: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+gamma_scheduler_dqn: 0.99
+epoch_num: 30
+patience: 5
+workers: 8
+al_train_epochs: 5
+
+# Active Learning 参数
+budget_labels: 100
+rl_pool: 10
+rl_episodes: 5
+rl_buffer: 100
+dqn_bs: 16
+dqn_gamma: 0.99
+
+# MMACTION2 配置
+mmaction_config: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py  # <-- 你应将模型配置保存于此路径
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py  # HAR模型配置文件路径
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth  # HAR模型权重路径
+num_classes: 51  # 类别数，根据HMDB51数据集设置为51
+embed_dim: 4096  # 策略网络输入维度，需与compute_state输出一致
+clip_len: 16
+num_clips: 1
