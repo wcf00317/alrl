@@ -10,7 +10,7 @@ input_size: 112  # 输入图像尺寸
 scale_size: 128  # 缩放尺寸
 train_batch_size: 32  # 训练批次大小
 val_batch_size: 8  # 验证批次大小
-num_each_iter: 5  # 每次迭代处理的样本数量
+num_each_iter: 30  # 每次迭代处理的样本数量
 
 # 路径加载控制
 load_weights: false  # 是否加载预训练权重
@@ -27,7 +27,7 @@ only_last_labeled: false  # 是否只使用最后标记的数据
 train: true  # 是否进行训练
 seed: 42  # 随机种子
 optimizer: SGD  # 优化器
-lr: 0.001  # 学习率
+lr: 0.0001  # 学习率
 lr_dqn: 0.0001  # DQN的学习率
 weight_decay: 0.0005  # 权重衰减
 momentum: 0.9  # 动量
@@ -39,7 +39,7 @@ workers: 8
 # Active Learning 参数
 budget_labels: 2000  # 标记预算
 rl_pool: 10  # RL池大小
-rl_episodes: 5  # RL训练回合数
+rl_episodes: 10  # RL训练回合数
 rl_buffer: 100  # RL缓冲区大小
 dqn_bs: 16  # DQN批次大小
 dqn_gamma: 0.99  # DQN的折扣因子
@@ -51,4 +51,4 @@ model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-
 num_classes: 101  # 类别数，根据UCF101数据集设置为101
 embed_dim: 4096  # 策略网络输入维度，需与compute_state输出一致
 clip_len: 16  # 视频剪辑长度
-al_train_epochs: 10
+al_train_epochs: 15

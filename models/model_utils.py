@@ -322,69 +322,18 @@ def compute_state(args, model, video_indices, candidate_set, train_set=None):
 #     return all_state, candidate_video_indices # 这里的 candidate_video_indices 现在直接是视频ID列表
 
 
-# def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
-#     """
-#     计算RL状态的【最终健壮版】。
-#     通过手动批处理并直接调用 get_video，彻底避免与 __getitem__ 的冲突。
-#     """
-#     s = time.time()
-#     print('Computing state (robust manual batching)...')
-#     model.eval()
-#
-#     def process_indices_in_batches(indices_list):
-#         if not indices_list:
-#             return torch.empty(0, args.num_classes + 2, device='cpu')
-#
-#         all_features = []
-#         # 从args或默认值获取批处理大小
-#         batch_size = args.val_batch_size
-#
-#         with torch.no_grad():
-#             # 手动切分批次
-#             for i in range(0, len(indices_list), batch_size):
-#                 batch_indices = indices_list[i:i + batch_size]
-#
-#                 # 关键：我们不依赖 __getitem__，而是直接调用为状态计算设计的 get_video
-#                 # get_video 应该返回一个简单的 [C, T, H, W] 张量
-#                 video_tensors = [train_set.get_video(vid_idx) for vid_idx in batch_indices]
-#
-#                 # 手动将数据堆叠成一个批次
-#                 video_batch = torch.stack(video_tensors).cuda(non_blocking=True)
-#
-#                 # 为模型准备输入
-#                 video_batch = video_batch.unsqueeze(1) # [B, 1, C, T, H, W]
-#
-#                 # 模型推理和特征计算
-#                 logits = model(video_batch, return_loss=False)
-#                 probs = F.softmax(logits, dim=1)
-#                 entropy_vals = -torch.sum(probs * torch.log(probs + 1e-8), dim=1, keepdim=True)
-#                 max_prob_vals, _ = torch.max(probs, dim=1, keepdim=True)
-#
-#                 batch_features = torch.cat([entropy_vals, max_prob_vals, probs], dim=1)
-#                 all_features.append(batch_features.cpu())
-#
-#         return torch.cat(all_features, dim=0)
-#
-#     # 1. 计算未标注视频池的状态
-#     state_pool_tensor = process_indices_in_batches(candidate_video_indices)
-#
-#     # 2. 计算已标注视频子集的状态
-#     state_subset_tensor = process_indices_in_batches(labeled_video_indices if labeled_video_indices is not None else [])
-#
-#     # 3. 构建最终的状态字典
-#     all_state = {'pool': state_pool_tensor, 'subset': state_subset_tensor}
-#
-#     print(f'State computed! Time elapsed: {time.time() - s:.2f}s')
-#
-#     return all_state, candidate_video_indices
+import torch
+import torch.nn.functional as F
+import time
+
 
 def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
     """
-    计算RL状态的【逐一处理修正版】。
-    此版本修复了参数和设备bug，但为了调试方便，恢复了逐一处理视频的逻辑。
-    注意：此版本运行速度会比批处理版本慢很多。
+    计算RL状态的【特征嵌入修正版】。
+    此版本提取模型倒数第二层的特征嵌入（默认为4096维），以匹配策略网络的输入维度。
+    注意：此版本仍然是逐一处理视频，速度较慢，但逻辑清晰，便于调试。
 
-    :param args: 参数对象
+    :param args: 参数对象，需要包含 embed_dim (例如 4096)
     :param model: MMAction2 视频分类模型
     :param train_set: 完整的数据集对象
     :param candidate_video_indices: List[int]，候选未标注视频ID。
@@ -394,9 +343,8 @@ def compute_state_for_har(args, model, train_set, candidate_video_indices, label
         candidate_video_indices: 原样返回。
     """
     s = time.time()
-    print('Computing state (single item processing for debugging)...')
+    print('Computing state with 4096-dim feature embeddings...')
     model.eval()
-
 
     # --------------------------------------------------------------------
     # 为了避免代码重复，我们先定义一个处理单个视频的内部辅助函数
@@ -407,27 +355,26 @@ def compute_state_for_har(args, model, train_set, candidate_video_indices, label
         video_tensor = video_tensor.unsqueeze(0).cuda()
 
         with torch.no_grad():
-            # 为模型准备输入
-            # video_tensor = video_tensor.unsqueeze(1)
-            logits = model(video_tensor, return_loss=False)
-            if logits.shape[0] > 1:  # 如果有多个clips
-                # 在进行softmax之前，先对logits求平均
-                logits = logits.mean(dim=0, keepdim=True)  # 形状变为 [1, num_classes]
+            # MODIFIED: 调用模型的 extract_feat 方法提取特征，而不是执行完整的分类前向传播。
+            # REASON: 我们需要的是分类头(cls_head)之前的特征嵌入，它的维度（通常是4096）与策略网络的输入相匹配。
+            #         MMAction2中的识别器(recognizer)通常都实现了 extract_feat 方法来获取主干网络的输出。
+            features = model.extract_feat(video_tensor)[0]
+            #print(features)
+            #print(features.shape)
+            # MODIFIED: 如果模型为每个视频生成了多个clips的特征，我们需要对它们进行平均池化。
+            # REASON: 这与您之前对logits的处理方式保持一致，确保每个视频最终只由一个特征向量表示。
+            if features.shape[0] > 1:  # 如果有多个clips
+                features = features.mean(dim=0, keepdim=True)  # 形状从 [N, D] 变为 [1, D]
 
-            probs = F.softmax(logits, dim=1)
+            # MODIFIED: 直接使用提取到的特征作为最终的特征向量。
+            # REASON: 我们不再需要计算softmax概率、熵或最大概率值，因为状态表示本身就是高维特征。
+            feature_vector = features  # 形状已经是 [1, D] 或 [D]，取决于模型实现
 
-            # 特征计算
-            entropy_val = -torch.sum(probs * torch.log(probs + 1e-8), dim=1).item()
-            max_prob_val = torch.max(probs).item()
+            # 确保返回的张量形状是 [1, D]，方便后续拼接
+            if feature_vector.dim() == 1:
+                feature_vector = feature_vector.unsqueeze(0)
 
-            # 拼接特征向量 (所有张量都在GPU上，无设备冲突)
-            # print(entropy_val.shape, max_prob_val.shape)
-            feature_vector = probs.squeeze(0)#torch.cat(
-                #[torch.tensor([entropy_val, max_prob_val], device=probs.device), probs.squeeze(0)], dim=0)
-            # print(feature_vector.shape)
-            # print("=================")
-            # 返回一个 [1, D] 形状的张量，方便后续拼接
-            return feature_vector.unsqueeze(0)
+            return feature_vector
 
     # --------------------------------------------------------------------
 
@@ -438,8 +385,10 @@ def compute_state_for_har(args, model, train_set, candidate_video_indices, label
             feature = _get_feature_for_single_video(vid_idx)
             state_pool_features.append(feature)
 
+    # MODIFIED: 如果池为空，创建一个维度与特征嵌入维度(embed_dim)匹配的空张量。
+    # REASON: 原来是 args.num_classes + 2，现在需要匹配新的特征维度。
     state_pool_tensor = torch.cat(state_pool_features, dim=0) if state_pool_features else torch.empty(0,
-                                                                                                      args.num_classes + 2)
+                                                                                                      args.embed_dim)
 
     # 2. 计算已标注视频子集的状态
     if labeled_video_indices:
@@ -447,28 +396,117 @@ def compute_state_for_har(args, model, train_set, candidate_video_indices, label
         for vid_idx in labeled_video_indices:
             feature = _get_feature_for_single_video(vid_idx)
             state_subset_features.append(feature)
-        
-        # ✅ 首先，像原来一样拼接成一个 [num_labeled, num_classes] 的大张量
+
+        # ✅ 首先，像原来一样拼接成一个 [num_labeled, embed_dim] 的大张量
         all_subset_features = torch.cat(state_subset_features, dim=0)
-        
+
         # ✅ 然后，对所有已标注视频的特征取平均值，聚合成一个单一的向量
-        # keepdim=True 确保输出形状是 [1, num_classes] 而不是 [num_classes]
+        # keepdim=True 确保输出形状是 [1, embed_dim] 而不是 [embed_dim]
         fixed_size_subset_tensor = torch.mean(all_subset_features, dim=0, keepdim=True)
     else:
-        # 如果没有任何已标注视频，返回一个正确形状的零向量
-        fixed_size_subset_tensor = torch.zeros(1, args.num_classes, device='cuda')
-
-    # state_subset_tensor = torch.cat(state_subset_features, dim=0) if state_subset_features else torch.empty(0,
-    #                                                                                                        args.num_classes + 2)
+        # MODIFIED: 如果没有任何已标注视频，返回一个与特征嵌入维度(embed_dim)匹配的零向量。
+        # REASON: 原来是 args.num_classes，现在需要匹配新的特征维度。
+        fixed_size_subset_tensor = torch.zeros(1, args.embed_dim, device='cuda')
 
     # 3. 构建最终的状态字典
-    # all_state = {'pool': state_pool_tensor.cpu(), 'subset': state_subset_tensor.cpu()}
     all_state = {'pool': state_pool_tensor.cpu(), 'subset': fixed_size_subset_tensor.cpu()}
 
-    print(f'State computed! Pool shape: {all_state["pool"].shape}, Subset shape: {all_state["subset"].shape}. Time: {time.time() - s:.2f}s')
-
+    print(
+        f'State computed! Pool shape: {all_state["pool"].shape}, Subset shape: {all_state["subset"].shape}. Time: {time.time() - s:.2f}s')
 
     return all_state, candidate_video_indices
+
+# def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
+#     """
+#     计算RL状态的【逐一处理修正版】。
+#     此版本修复了参数和设备bug，但为了调试方便，恢复了逐一处理视频的逻辑。
+#     注意：此版本运行速度会比批处理版本慢很多。
+#
+#     :param args: 参数对象
+#     :param model: MMAction2 视频分类模型
+#     :param train_set: 完整的数据集对象
+#     :param candidate_video_indices: List[int]，候选未标注视频ID。
+#     :param labeled_video_indices: List[int]，可选，已标注视频的ID列表。
+#     :return:
+#         all_state: dict, 包含 'pool' 和 'subset' 的状态特征张量。
+#         candidate_video_indices: 原样返回。
+#     """
+#     s = time.time()
+#     print('Computing state (single item processing for debugging)...')
+#     model.eval()
+#
+#
+#     # --------------------------------------------------------------------
+#     # 为了避免代码重复，我们先定义一个处理单个视频的内部辅助函数
+#     def _get_feature_for_single_video(vid_idx):
+#         # 统一使用 train_set 的 get_video 方法，它应该返回一个简单的 [C, T, H, W] 张量
+#         video_tensor = train_set.get_video(vid_idx)
+#         # 增加批次维度(B=1)，并移动到 CUDA
+#         video_tensor = video_tensor.unsqueeze(0).cuda()
+#
+#         with torch.no_grad():
+#             # 为模型准备输入
+#             # video_tensor = video_tensor.unsqueeze(1)
+#             logits = model(video_tensor, return_loss=False)
+#             if logits.shape[0] > 1:  # 如果有多个clips
+#                 # 在进行softmax之前，先对logits求平均
+#                 logits = logits.mean(dim=0, keepdim=True)  # 形状变为 [1, num_classes]
+#
+#             probs = F.softmax(logits, dim=1)
+#
+#             # 特征计算
+#             entropy_val = -torch.sum(probs * torch.log(probs + 1e-8), dim=1).item()
+#             max_prob_val = torch.max(probs).item()
+#
+#             # 拼接特征向量 (所有张量都在GPU上，无设备冲突)
+#             # print(entropy_val.shape, max_prob_val.shape)
+#             feature_vector = probs.squeeze(0)#torch.cat(
+#                 #[torch.tensor([entropy_val, max_prob_val], device=probs.device), probs.squeeze(0)], dim=0)
+#             # print(feature_vector.shape)
+#             # print("=================")
+#             # 返回一个 [1, D] 形状的张量，方便后续拼接
+#             return feature_vector.unsqueeze(0)
+#
+#     # --------------------------------------------------------------------
+#
+#     # 1. 计算未标注视频池的状态
+#     state_pool_features = []
+#     if candidate_video_indices:
+#         for vid_idx in candidate_video_indices:
+#             feature = _get_feature_for_single_video(vid_idx)
+#             state_pool_features.append(feature)
+#
+#     state_pool_tensor = torch.cat(state_pool_features, dim=0) if state_pool_features else torch.empty(0,
+#                                                                                                       args.num_classes + 2)
+#
+#     # 2. 计算已标注视频子集的状态
+#     if labeled_video_indices:
+#         state_subset_features = []
+#         for vid_idx in labeled_video_indices:
+#             feature = _get_feature_for_single_video(vid_idx)
+#             state_subset_features.append(feature)
+#
+#         # ✅ 首先，像原来一样拼接成一个 [num_labeled, num_classes] 的大张量
+#         all_subset_features = torch.cat(state_subset_features, dim=0)
+#
+#         # ✅ 然后，对所有已标注视频的特征取平均值，聚合成一个单一的向量
+#         # keepdim=True 确保输出形状是 [1, num_classes] 而不是 [num_classes]
+#         fixed_size_subset_tensor = torch.mean(all_subset_features, dim=0, keepdim=True)
+#     else:
+#         # 如果没有任何已标注视频，返回一个正确形状的零向量
+#         fixed_size_subset_tensor = torch.zeros(1, args.num_classes, device='cuda')
+#
+#     # state_subset_tensor = torch.cat(state_subset_features, dim=0) if state_subset_features else torch.empty(0,
+#     #                                                                                                        args.num_classes + 2)
+#
+#     # 3. 构建最终的状态字典
+#     # all_state = {'pool': state_pool_tensor.cpu(), 'subset': state_subset_tensor.cpu()}
+#     all_state = {'pool': state_pool_tensor.cpu(), 'subset': fixed_size_subset_tensor.cpu()}
+#
+#     print(f'State computed! Pool shape: {all_state["pool"].shape}, Subset shape: {all_state["subset"].shape}. Time: {time.time() - s:.2f}s')
+#
+#
+#     return all_state, candidate_video_indices
 
 def add_labeled_videos(args, list_existing_videos, videos_to_label_ids, train_set, budget, n_ep):
     """
