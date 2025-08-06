@@ -378,7 +378,7 @@ def main(args):
 
             # 10. 优化策略网络 (DQN)
             optimize_model_conv(args, memory, Transition, policy_net, target_net, optimizerP, GAMMA=args.dqn_gamma,
-                                BATCH_SIZE=args.dqn_bs)
+                                BATCH_SIZE=args.dqn_bs,dqn_epochs=args.dqn_epochs)
 
             # 11. 更新目标网络
             if i % TARGET_UPDATE == 0:
@@ -442,6 +442,8 @@ def main(args):
             # current_state, _ = compute_state_for_har(args, net, video_candidates_for_state,
             #                                  candidate_set,
             #                                  labeled_video_indices=labeled_video_ids_for_state)
+
+
             current_state, _ = compute_state_for_har(
                 args,
                 net,

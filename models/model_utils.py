@@ -14,7 +14,7 @@ from torch.utils.data import Subset, DataLoader
 from utils.final_utils import get_logfile
 from utils.progressbar import progress_bar
 from mmaction.apis import init_recognizer
-from models.query_network import TransformerPolicyNet  # 假设你已保存该类
+from models.query_network import AdvancedTransformerPolicyNet  # 假设你已保存该类
 EPS_START = 0.9
 EPS_END = 0.05
 EPS_DECAY = 200
@@ -45,8 +45,8 @@ def create_models(dataset, model_cfg_path, model_ckpt_path, num_classes,
 
     # Step 2: 策略网络（DQN或Transformer）
     if use_policy:
-        policy_net = TransformerPolicyNet(input_dim=embed_dim, embed_dim=embed_dim).cuda()
-        target_net = TransformerPolicyNet(input_dim=embed_dim, embed_dim=embed_dim).cuda()
+        policy_net = AdvancedTransformerPolicyNet(input_dim=embed_dim).cuda()
+        target_net = AdvancedTransformerPolicyNet(input_dim=embed_dim).cuda()
         print(f'Policy/Target network created. Policy net parameters: {count_parameters(policy_net)}')
     else:
         policy_net = None
@@ -584,9 +584,9 @@ def select_action_for_har(args, policy_net, all_state, steps_done, test=False):
                 action = torch.topk(q_vals, k, dim=0)[1]  # [1] 代表我们只关心索引
         else:
             print('[DQN] Random exploration')
-            action = torch.randint(0, state_pool.size(0), (args.num_each_iter,))
+            action = torch.randperm(state_pool.size(0))[:args.num_each_iter]
     elif args.al_algorithm == 'random':
-        action = torch.randint(0, state_pool.size(0), (args.num_each_iter,))
+        action = torch.randperm(state_pool.size(0))[:args.num_each_iter]
     elif args.al_algorithm == 'entropy':
         # 你需要提前将 logits 存入 state_pool（假设shape为 [N, C]）
         probs = state_pool[:, 2:]  # 剔除 entropy, max_prob
@@ -796,6 +796,12 @@ def optimize_model_conv(args, memory, Transition, policy_net, target_net, optimi
         progress_bar(ep, dqn_epochs, '[DQN loss %.5f]' % (loss_item / (ep + 1)))
         
         loss.backward()
+
+        # REASON: 强化学习的训练过程容易不稳定，可能会产生非常大的梯度，
+        #         导致网络权重更新过猛（“梯度爆炸”），从而破坏学习过程。
+        #         梯度裁剪将所有参数的梯度范数强制限制在一个最大值（这里是1.0）以内，
+        #         确保了每次更新的步长都是合理的，从而极大地稳定了训练。
+        torch.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=1.0)
         optimizerP.step()
 
         del (q_val)
