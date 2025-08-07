@@ -18,18 +18,35 @@ def create_and_load_optimizers(net, opt_choice, lr, wd,
                                snapshot, checkpointer, load_opt,
                                policy_net=None, lr_dqn=0.0001, al_algorithm='random'):
     optimizerP = None
-    opt_kwargs = {"lr": lr,
-                  "weight_decay": wd,
-                  "momentum": momentum
-                  }
-    opt_kwargs_rl = {"lr": lr_dqn,
-                     "weight_decay": 0.001,
-                     "momentum": momentum
-                     }
 
-    optimizer = optim.SGD(
-        params=filter(lambda p: p.requires_grad, net.parameters()),
-        **opt_kwargs)
+    # --- 核心修改：为迁移学习设置差异化学习率 ---
+    # REASON: 新的、随机初始化的分类头需要一个比预训练主干网络大得多的学习率才能有效学习。
+
+    # 1. 识别出主干网络和分类头的参数
+    backbone_params = [p for name, p in net.named_parameters() if 'cls_head' not in name and p.requires_grad]
+    cls_head_params = [p for name, p in net.named_parameters() if 'cls_head' in name and p.requires_grad]
+
+    # 2. 为不同部分创建不同的参数组
+    #    让分类头的学习率是主学习率的10倍，这是一个常见的起点
+    params_group = [
+        {'params': backbone_params, 'lr': lr},
+        {'params': cls_head_params, 'lr': lr * 10}
+    ]
+
+    print(f"Optimizer setup: Backbone LR = {lr}, Classifier Head LR = {lr * 10}")
+
+    opt_kwargs = {
+        "weight_decay": wd,
+        "momentum": momentum
+    }
+
+    # 3. 使用新的参数组来初始化优化器
+    optimizer = optim.SGD(params=params_group, **opt_kwargs)
+    opt_kwargs_rl = {
+        "lr": lr_dqn,
+        "weight_decay": 0.001,
+        "momentum": momentum
+    }
 
     if policy_net is not None:
         if opt_choice == 'SGD':

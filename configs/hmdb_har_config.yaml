@@ -2,7 +2,8 @@
 dataset: hmdb51
 data_path: ../hmdb51
 ckpt_path: ./checkpoints
-exp_name: hmdb_exp
+# 【修改建议 1】: 为新实验起一个清晰的名字，避免与旧实验混淆
+exp_name: hmdb_from_ucf101_exp
 al_algorithm: dqn
 
 # 数据处理
@@ -10,10 +11,11 @@ input_size: 112
 scale_size: 128
 train_batch_size: 32
 val_batch_size: 8
+# 【修改建议 2】: 为了更纯粹的奖励信号和更快的调试，将每轮选择的样本数减少
 num_each_iter: 5
 
 # 路径加载控制
-load_weights: false
+load_weights: false # 保持false，因为模型加载由mmaction的model_ckpt_path控制
 load_opt: false
 exp_name_toload: null
 exp_name_toload_rl: null
@@ -27,30 +29,36 @@ only_last_labeled: false
 train: true
 seed: 42
 optimizer: SGD
-lr: 0.01
+# 【核心修改】: 将学习率降低到适合微调的量级
+lr: 0.0001
 lr_dqn: 0.0001
 weight_decay: 0.0005
 momentum: 0.9
 gamma: 0.95
 gamma_scheduler_dqn: 0.99
 epoch_num: 30
-patience: 5
+patience: 10 # 可以适当增加patience
 workers: 8
-al_train_epochs: 5
+# 【修改建议 3】: 适当增加奖励计算时的微调周期，让奖励信号更稳定
+al_train_epochs: 15
 
 # Active Learning 参数
-budget_labels: 100
+# 【修改建议 4】: 重新设置一个较小的预算，以加速实验
+budget_labels: 378
 rl_pool: 10
-rl_episodes: 5
+rl_episodes: 10
 rl_buffer: 100
-dqn_bs: 16
+# 【修改建议 5】: 保持dqn_bs与num_each_iter相等
+dqn_bs: 5
 dqn_gamma: 0.99
 
 # MMACTION2 配置
-mmaction_config: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py  # <-- 你应将模型配置保存于此路径
-model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py  # HAR模型配置文件路径
-model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth  # HAR模型权重路径
-num_classes: 51  # 类别数，根据HMDB51数据集设置为51
-embed_dim: 4096  # 策略网络输入维度，需与compute_state输出一致
+mmaction_config: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+# 【关键】这里依然指向在UCF101上训练好的权重
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth
+# 【关键】确保类别数为HMDB51的51
+num_classes: 51
+embed_dim: 4096
 clip_len: 16
 num_clips: 1

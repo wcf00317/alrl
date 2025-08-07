@@ -10,7 +10,7 @@ input_size: 112  # 输入图像尺寸
 scale_size: 128  # 缩放尺寸
 train_batch_size: 32  # 训练批次大小
 val_batch_size: 8  # 验证批次大小
-num_each_iter: 30  # 每次迭代处理的样本数量
+num_each_iter: 5  # 每次迭代处理的样本数量
 
 # 路径加载控制
 load_weights: false  # 是否加载预训练权重
@@ -37,12 +37,13 @@ epoch_num: 100  # 训练的总epoch数
 patience: 30  # 早停的耐心值
 workers: 8
 # Active Learning 参数
-budget_labels: 2000  # 标记预算
+budget_labels: 550  # 标记预算
 rl_pool: 10  # RL池大小
 rl_episodes: 10  # RL训练回合数
 rl_buffer: 100  # RL缓冲区大小
-dqn_bs: 16  # DQN批次大小
+dqn_bs: 10  # DQN批次大小
 dqn_gamma: 0.99  # DQN的折扣因子
+dqn_epochs: 10
 
 # MMACTION2 配置
 #mmaction_config: configs/c3d_config.py  # MMACTION2模型配置路径

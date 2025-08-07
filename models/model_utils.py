@@ -5,16 +5,12 @@ import os
 import random
 from scipy.stats import entropy
 
-import torch
 import torch.nn as nn
-from torch.autograd import Variable
-import torch.nn.functional as F
-from torch.utils.data import Subset, DataLoader
 
 from utils.final_utils import get_logfile
 from utils.progressbar import progress_bar
 from mmaction.apis import init_recognizer
-from models.query_network import TransformerPolicyNet  # 假设你已保存该类
+from models.query_network import AdvancedTransformerPolicyNet  # 假设你已保存该类
 EPS_START = 0.9
 EPS_END = 0.05
 EPS_DECAY = 200
@@ -45,8 +41,8 @@ def create_models(dataset, model_cfg_path, model_ckpt_path, num_classes,
 
     # Step 2: 策略网络（DQN或Transformer）
     if use_policy:
-        policy_net = TransformerPolicyNet(input_dim=embed_dim, embed_dim=embed_dim).cuda()
-        target_net = TransformerPolicyNet(input_dim=embed_dim, embed_dim=embed_dim).cuda()
+        policy_net = AdvancedTransformerPolicyNet(input_dim=embed_dim).cuda()
+        target_net = AdvancedTransformerPolicyNet(input_dim=embed_dim).cuda()
         print(f'Policy/Target network created. Policy net parameters: {count_parameters(policy_net)}')
     else:
         policy_net = None
@@ -322,6 +318,7 @@ def compute_state(args, model, video_indices, candidate_set, train_set=None):
 #     return all_state, candidate_video_indices # 这里的 candidate_video_indices 现在直接是视频ID列表
 
 
+
 import torch
 import torch.nn.functional as F
 import time
@@ -329,92 +326,77 @@ import time
 
 def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
     """
-    计算RL状态的【特征嵌入修正版】。
-    此版本提取模型倒数第二层的特征嵌入（默认为4096维），以匹配策略网络的输入维度。
-    注意：此版本仍然是逐一处理视频，速度较慢，但逻辑清晰，便于调试。
-
-    :param args: 参数对象，需要包含 embed_dim (例如 4096)
-    :param model: MMAction2 视频分类模型
-    :param train_set: 完整的数据集对象
-    :param candidate_video_indices: List[int]，候选未标注视频ID。
-    :param labeled_video_indices: List[int]，可选，已标注视频的ID列表。
-    :return:
-        all_state: dict, 包含 'pool' 和 'subset' 的状态特征张量。
-        candidate_video_indices: 原样返回。
+    【熵奖励修正版】
+    此版本同时计算4096维特征嵌入（用于状态）和每个视频的熵（用于奖励模型训练数据），
+    并作为三个独立的变量返回，以匹配 run.py 中的调用。
     """
     s = time.time()
-    print('Computing state with 4096-dim feature embeddings...')
+    print('Computing state (4096-dim embeddings) AND entropy for reward calculation...')
     model.eval()
 
+    # --- 新增：初始化两个列表，分别存储特征和熵 ---
+    state_pool_features = []
+    candidate_entropies = []
+
     # --------------------------------------------------------------------
-    # 为了避免代码重复，我们先定义一个处理单个视频的内部辅助函数
-    def _get_feature_for_single_video(vid_idx):
-        # 统一使用 train_set 的 get_video 方法，它应该返回一个简单的 [C, T, H, W] 张量
+    # 内部辅助函数现在需要同时返回特征和熵
+    def _get_feature_and_entropy_for_single_video(vid_idx):
         video_tensor = train_set.get_video(vid_idx)
-        # 增加批次维度(B=1)，并移动到 CUDA
         video_tensor = video_tensor.unsqueeze(0).cuda()
 
         with torch.no_grad():
-            # MODIFIED: 调用模型的 extract_feat 方法提取特征，而不是执行完整的分类前向传播。
-            # REASON: 我们需要的是分类头(cls_head)之前的特征嵌入，它的维度（通常是4096）与策略网络的输入相匹配。
-            #         MMAction2中的识别器(recognizer)通常都实现了 extract_feat 方法来获取主干网络的输出。
+            # 1. 为了计算熵，我们仍然需要做一次完整的分类前向传播来获取概率
+            logits = model(video_tensor, return_loss=False)
+            if logits.shape[0] > 1:
+                logits = logits.mean(dim=0, keepdim=True)
+
+            probs = F.softmax(logits, dim=1)
+            entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1).item()
+
+            # 2. 获取4096维特征用于状态表示
             features = model.extract_feat(video_tensor)[0]
-            #print(features)
-            #print(features.shape)
-            # MODIFIED: 如果模型为每个视频生成了多个clips的特征，我们需要对它们进行平均池化。
-            # REASON: 这与您之前对logits的处理方式保持一致，确保每个视频最终只由一个特征向量表示。
-            if features.shape[0] > 1:  # 如果有多个clips
-                features = features.mean(dim=0, keepdim=True)  # 形状从 [N, D] 变为 [1, D]
+            if features.shape[0] > 1:
+                features = features.mean(dim=0, keepdim=True)
 
-            # MODIFIED: 直接使用提取到的特征作为最终的特征向量。
-            # REASON: 我们不再需要计算softmax概率、熵或最大概率值，因为状态表示本身就是高维特征。
-            feature_vector = features  # 形状已经是 [1, D] 或 [D]，取决于模型实现
+            if features.dim() == 1:
+                features = features.unsqueeze(0)
 
-            # 确保返回的张量形状是 [1, D]，方便后续拼接
-            if feature_vector.dim() == 1:
-                feature_vector = feature_vector.unsqueeze(0)
-
-            return feature_vector
+            # 同时返回特征和熵
+            return features, entropy
 
     # --------------------------------------------------------------------
 
-    # 1. 计算未标注视频池的状态
-    state_pool_features = []
+    # 1. 计算未标注视频池的状态和熵
     if candidate_video_indices:
         for vid_idx in candidate_video_indices:
-            feature = _get_feature_for_single_video(vid_idx)
+            # 接收特征和熵两个返回值
+            feature, entropy = _get_feature_and_entropy_for_single_video(vid_idx)
             state_pool_features.append(feature)
+            # 将熵存入列表
+            candidate_entropies.append(entropy)
 
-    # MODIFIED: 如果池为空，创建一个维度与特征嵌入维度(embed_dim)匹配的空张量。
-    # REASON: 原来是 args.num_classes + 2，现在需要匹配新的特征维度。
-    state_pool_tensor = torch.cat(state_pool_features, dim=0) if state_pool_features else torch.empty(0,
-                                                                                                      args.embed_dim)
+    state_pool_tensor = torch.cat(state_pool_features, dim=0) if state_pool_features else torch.empty(0, args.embed_dim)
 
-    # 2. 计算已标注视频子集的状态
+    # 2. 计算已标注视频子集的状态 (这部分逻辑不变，我们只需要特征)
     if labeled_video_indices:
         state_subset_features = []
         for vid_idx in labeled_video_indices:
-            feature = _get_feature_for_single_video(vid_idx)
+            # 在这里我们只需要特征，可以忽略熵的返回值
+            feature, _ = _get_feature_and_entropy_for_single_video(vid_idx)
             state_subset_features.append(feature)
 
-        # ✅ 首先，像原来一样拼接成一个 [num_labeled, embed_dim] 的大张量
         all_subset_features = torch.cat(state_subset_features, dim=0)
-
-        # ✅ 然后，对所有已标注视频的特征取平均值，聚合成一个单一的向量
-        # keepdim=True 确保输出形状是 [1, embed_dim] 而不是 [embed_dim]
         fixed_size_subset_tensor = torch.mean(all_subset_features, dim=0, keepdim=True)
     else:
-        # MODIFIED: 如果没有任何已标注视频，返回一个与特征嵌入维度(embed_dim)匹配的零向量。
-        # REASON: 原来是 args.num_classes，现在需要匹配新的特征维度。
         fixed_size_subset_tensor = torch.zeros(1, args.embed_dim, device='cuda')
 
     # 3. 构建最终的状态字典
     all_state = {'pool': state_pool_tensor.cpu(), 'subset': fixed_size_subset_tensor.cpu()}
 
-    print(
-        f'State computed! Pool shape: {all_state["pool"].shape}, Subset shape: {all_state["subset"].shape}. Time: {time.time() - s:.2f}s')
+    print(f'State and entropies computed! Pool shape: {all_state["pool"].shape}. Time: {time.time() - s:.2f}s')
 
-    return all_state, candidate_video_indices
+    # --- 核心修改：返回三个值 ---
+    return all_state, candidate_video_indices, candidate_entropies
 
 # def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
 #     """
@@ -584,9 +566,9 @@ def select_action_for_har(args, policy_net, all_state, steps_done, test=False):
                 action = torch.topk(q_vals, k, dim=0)[1]  # [1] 代表我们只关心索引
         else:
             print('[DQN] Random exploration')
-            action = torch.randint(0, state_pool.size(0), (args.num_each_iter,))
+            action = torch.randperm(state_pool.size(0))[:args.num_each_iter]
     elif args.al_algorithm == 'random':
-        action = torch.randint(0, state_pool.size(0), (args.num_each_iter,))
+        action = torch.randperm(state_pool.size(0))[:args.num_each_iter]
     elif args.al_algorithm == 'entropy':
         # 你需要提前将 logits 存入 state_pool（假设shape为 [N, C]）
         probs = state_pool[:, 2:]  # 剔除 entropy, max_prob
@@ -796,6 +778,12 @@ def optimize_model_conv(args, memory, Transition, policy_net, target_net, optimi
         progress_bar(ep, dqn_epochs, '[DQN loss %.5f]' % (loss_item / (ep + 1)))
         
         loss.backward()
+
+        # REASON: 强化学习的训练过程容易不稳定，可能会产生非常大的梯度，
+        #         导致网络权重更新过猛（“梯度爆炸”），从而破坏学习过程。
+        #         梯度裁剪将所有参数的梯度范数强制限制在一个最大值（这里是1.0）以内，
+        #         确保了每次更新的步长都是合理的，从而极大地稳定了训练。
+        torch.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=1.0)
         optimizerP.step()
 
         del (q_val)
