@@ -4,7 +4,7 @@ data_path: ../hmdb51
 ckpt_path: ./checkpoints
 # 【修改建议 1】: 为新实验起一个清晰的名字，避免与旧实验混淆
 exp_name: hmdb_from_ucf101_exp
-al_algorithm: random
+al_algorithm: dqn
 
 # 数据处理
 input_size: 112

@@ -1,149 +1,116 @@
+# 文件名: train_full_data.py (Corrected)
+
 import os
 import sys
 import shutil
-import numpy as np
 import random
-import math
-
+import numpy as np
+import yaml
 import torch
 import torch.nn as nn
 from torch.backends import cudnn
-from torch.optim.lr_scheduler import ReduceLROnPlateau, ExponentialLR, MultiStepLR
+from torch.optim.lr_scheduler import ExponentialLR
+from tqdm import tqdm
+from torch.utils.data import DataLoader # <-- THIS LINE WAS MISSING
 
-from models.model_utils import create_models, load_models
+# 从您的项目中导入必要的模块
+from models.model_utils import create_models
 from data.data_utils import get_data
-from utils.final_utils import check_mkdir, create_and_load_optimizers, train, validate, final_test
+from utils.final_utils import check_mkdir, create_and_load_optimizers, get_logfile
 import utils.parser as parser
+from run_rl_with_alrm import train_har_classifier # 复用已有的训练函数
 
+# 设置随机种子以保证结果可复现
 cudnn.benchmark = False
 cudnn.deterministic = True
 
-
 def main(args):
-    # Set seeds
+    # --- 1. 初始化和配置加载 ---
+    if getattr(args, 'config', None):
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+        for key, value in config.items():
+            if isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    arg_key = f"{key}_{sub_key}"
+                    if not hasattr(args, arg_key) or getattr(args, arg_key) is None:
+                        setattr(args, arg_key, sub_value)
+            else:
+                if not hasattr(args, key) or getattr(args, key) is None:
+                    setattr(args, key, value)
+
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    ####------ Create experiment folder  ------####
     check_mkdir(args.ckpt_path)
     check_mkdir(os.path.join(args.ckpt_path, args.exp_name))
-
-    ####------ Print and save arguments in experiment folder  ------####
     parser.save_arguments(args)
-    ####------ Copy current config file to ckpt folder ------####
-    fn = sys.argv[0].rsplit('/', 1)[-1]
-    shutil.copy(sys.argv[0], os.path.join(args.ckpt_path, args.exp_name, fn))
 
-    ####------ Create segmentation, query and target networks ------####
-    kwargs_models = {"dataset": args.dataset,
-                     "al_algorithm": args.al_algorithm,
-                     "region_size": args.region_size
-                     }
-    net, _, _ = create_models(**kwargs_models)
+    # --- 2. 创建模型 ---
+    # use_policy=False 因为我们只是做有监督训练，不需要策略网络
+    net, _, _ = create_models(dataset=args.dataset,
+                              model_cfg_path=args.model_cfg_path,
+                              model_ckpt_path=args.model_ckpt_path,
+                              num_classes=args.num_classes,
+                              use_policy=False)
+    net.cuda()
+    criterion = nn.CrossEntropyLoss().cuda()
 
-    ####------ Load weights if necessary and create log file ------####
-    kwargs_load = {"net": net,
-                   "load_weights": args.load_weights,
-                   "exp_name_toload": args.exp_name_toload,
-                   "snapshot": args.snapshot,
-                   "exp_name": args.exp_name,
-                   "ckpt_path": args.ckpt_path,
-                   "checkpointer": args.checkpointer,
-                   "exp_name_toload_rl": args.exp_name_toload_rl,
-                   "policy_net": None,
-                   "target_net": None,
-                   "test": args.test,
-                   "dataset": args.dataset,
-                   "al_algorithm": 'None'}
-    logger, curr_epoch, best_record = load_models(**kwargs_load)
+    # --- 3. 加载全量数据 ---
+    # 注意：这里我们不再需要candidate_set，并且train_set会包含所有训练视频
+    # initial_labeled_ratio 设置为1.0来加载所有训练数据
+    _, train_set, val_loader, _ = get_data(
+        data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
+        n_workers=args.workers, clip_len=args.clip_len, transform_type='c3d',
+        initial_labeled_ratio=1.0 # 加载100%的训练数据
+    )
+    # 创建一个包含所有样本的DataLoader
+    full_train_loader = DataLoader(train_set, batch_size=args.train_batch_size, shuffle=True,
+                                   num_workers=args.workers, drop_last=False)
 
-    ####------ Load training and validation data ------####
-    kwargs_data = {"data_path": args.data_path,
-                   "tr_bs": args.train_batch_size,
-                   "vl_bs": args.val_batch_size,
-                   "n_workers": 4,
-                   "scale_size": args.scale_size,
-                   "input_size": args.input_size,
-                   "num_each_iter": args.num_each_iter,
-                   "only_last_labeled": args.only_last_labeled,
-                   "dataset": args.dataset,
-                   "test": args.test,
-                   "al_algorithm": args.al_algorithm,
-                   "full_res": args.full_res,
-                   "region_size": args.region_size,
-                   "supervised": True}
+    # --- 4. 设置优化器和日志 ---
+    optimizer = create_and_load_optimizers(net=net, opt_choice=args.optimizer, lr=args.lr,
+                                           wd=args.weight_decay, momentum=args.momentum, ckpt_path=args.ckpt_path,
+                                           exp_name_toload=None, exp_name=args.exp_name, snapshot=None,
+                                           checkpointer=False, load_opt=False)[0]
+    scheduler = ExponentialLR(optimizer, gamma=args.gamma)
 
-    train_loader, _, val_loader, _ = get_data(**kwargs_data)
+    # 日志文件名可以自定义，以便区分
+    log_name = 'full_data_training_log.txt'
+    if 'scratch' in args.exp_name:
+        log_name = 'full_data_scratch_log.txt'
 
-    ####------ Create losses ------####
-    criterion = nn.CrossEntropyLoss(ignore_index=train_loader.dataset.ignore_label).cuda()
+    logger, best_record, curr_epoch = get_logfile(args.ckpt_path, args.exp_name,
+                                                  checkpointer=False, snapshot=None,
+                                                  log_name=log_name)
 
-    ####------ Create optimizers (and load them if necessary) ------####
-    kwargs_load_opt = {"net": net,
-                       "opt_choice": args.optimizer,
-                       "lr": args.lr,
-                       "wd": args.weight_decay,
-                       "momentum": args.momentum,
-                       "ckpt_path": args.ckpt_path,
-                       "exp_name_toload": args.exp_name_toload,
-                       "exp_name": args.exp_name,
-                       "snapshot": args.snapshot,
-                       "checkpointer": args.checkpointer,
-                       "load_opt": args.load_opt,
-                       "policy_net": None,
-                       "lr_dqn": args.lr_dqn,
-                       "al_algorithm": 'None'}
-
-    optimizer, _ = create_and_load_optimizers(**kwargs_load_opt)
-
-    # Early stopping params initialization
-    es_val = 0
-    es_counter = 0
-
+    # --- 5. 执行训练 ---
     if args.train:
-        print('Starting training...')
-        scheduler = ExponentialLR(optimizer, gamma=0.998)
-        net.train()
-        for epoch in range(curr_epoch, args.epoch_num + 1):
-            print('Epoch %i /%i' % (epoch, args.epoch_num + 1))
-            tr_loss, _, tr_acc, tr_iu = train(train_loader, net, criterion,
-                                              optimizer, supervised=True)
+        print(f"--- 开始在HMDB51全量数据集上进行有监督训练 ---")
+        print(f"模型加载路径: {args.model_ckpt_path or 'None (Train from scratch)'}")
+        print(f"日志将保存在: {os.path.join(args.ckpt_path, args.exp_name, log_name)}")
 
-            if epoch % 1 == 0:
-                vl_loss, val_acc, val_iu, iu_xclass, _ = validate(val_loader, net, criterion,
-                                                                  optimizer, epoch, best_record,
-                                                                  args)
-
-            ## Append info to logger
-            info = [epoch, optimizer.param_groups[0]['lr'],
-                    tr_loss,
-                    0, vl_loss, tr_acc, val_acc, tr_iu, val_iu]
-            for cl in range(train_loader.dataset.num_classes):
-                info.append(iu_xclass[cl])
-            logger.append(info)
-            scheduler.step()
-            # Early stopping with val jaccard
-            es_counter += 1
-            if val_iu > es_val and not math.isnan(val_iu):
-                torch.save(net.cpu().state_dict(),
-                           os.path.join(args.ckpt_path, args.exp_name,
-                                        'best_jaccard_val.pth'))
-                net.cuda()
-                es_val = val_iu
-                es_counter = 0
-            elif es_counter > args.patience:
-                print('Patience for Early Stopping reached!')
-                break
-
+        # 调用复用的训练函数
+        _, final_val_acc = train_har_classifier(
+            args=args,
+            curr_epoch=0,
+            train_loader=full_train_loader,
+            net=net,
+            criterion=criterion,
+            optimizer=optimizer,
+            val_loader=val_loader,
+            best_record=best_record,
+            logger=logger, # 传入logger
+            scheduler=scheduler,
+            schedulerP=None, # 没有策略网络
+            final_train=True # 这是一个完整的训练过程
+        )
+        print(f"\n--- 训练结束 ---")
+        print(f"在HMDB51全量数据上的最佳验证准确率为: {final_val_acc:.4f}")
         logger.close()
 
-    if args.final_test:
-        final_test(args, net, criterion)
-
-
 if __name__ == '__main__':
-    ####------ Parse arguments from console  ------####
     args = parser.get_arguments()
     main(args)

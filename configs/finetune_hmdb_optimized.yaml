@@ -1,0 +1,31 @@
+# configs/finetune_optimized.yaml
+
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: hmdb_full_data_finetune_optimized # 新的实验名
+train: true
+seed: 42
+
+# 数据处理
+train_batch_size: 32
+val_batch_size: 8
+workers: 8
+clip_len: 16
+
+# 训练设置
+optimizer: SGD
+# 核心修改：为Backbone设置一个保守的学习率，分类头将自动乘以10
+lr: 0.00025
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.97 # 可以稍微减缓衰减速度
+epoch_num: 150 # 增加训练轮数，让模型有足够时间在小学习率下收敛
+patience: 30  # 配合更长的训练周期，增加早停的耐心
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth
+num_classes: 51
+embed_dim: 4096

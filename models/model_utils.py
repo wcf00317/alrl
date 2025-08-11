@@ -96,6 +96,7 @@ def load_models_for_har(model, load_weights, exp_name_toload, snapshot,
         checkpoint = torch.load(model_path)
         model.load_state_dict(checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint)
 
+
     if checkpointer and os.path.isfile(resume_path):
         print(f'[RESUME] Resuming model from {resume_path}')
         checkpoint = torch.load(resume_path)
