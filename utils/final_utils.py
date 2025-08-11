@@ -42,6 +42,8 @@ def create_and_load_optimizers(net, opt_choice, lr, wd,
 
     # 3. 使用新的参数组来初始化优化器
     optimizer = optim.SGD(params=params_group, **opt_kwargs)
+
+
     opt_kwargs_rl = {
         "lr": lr_dqn,
         "weight_decay": 0.001,

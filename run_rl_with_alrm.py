@@ -46,7 +46,9 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
         net.train()
         total_loss, correct, total = 0.0, 0, 0
         train_pbar = tqdm(train_loader, desc=f"Training  ", unit="batch")
+        i = 0
         for inputs, labels, idx in train_pbar:
+            i += 1
             inputs, labels = inputs.cuda(), labels.cuda()
             batch_size = inputs.shape[0]
             num_clips = inputs.shape[1]
@@ -56,7 +58,9 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
             labels_repeated = labels.repeat_interleave(num_clips)
             loss = criterion(outputs, labels_repeated)
             loss.backward()
+            # torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
             optimizer.step()
+
             total_loss += loss.item() * inputs.size(0)
             preds = outputs.argmax(dim=1)
             correct += (preds == labels_repeated).sum().item()

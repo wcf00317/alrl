@@ -9,7 +9,7 @@ import yaml
 import torch
 import torch.nn as nn
 from torch.backends import cudnn
-from torch.optim.lr_scheduler import ExponentialLR
+from torch.optim.lr_scheduler import ExponentialLR,StepLR
 from tqdm import tqdm
 from torch.utils.data import DataLoader # <-- THIS LINE WAS MISSING
 
@@ -55,6 +55,7 @@ def main(args):
                               model_ckpt_path=args.model_ckpt_path,
                               num_classes=args.num_classes,
                               use_policy=False)
+
     net.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
 
@@ -75,8 +76,10 @@ def main(args):
                                            wd=args.weight_decay, momentum=args.momentum, ckpt_path=args.ckpt_path,
                                            exp_name_toload=None, exp_name=args.exp_name, snapshot=None,
                                            checkpointer=False, load_opt=False)[0]
-    scheduler = ExponentialLR(optimizer, gamma=args.gamma)
 
+
+    scheduler = ExponentialLR(optimizer, gamma=args.gamma)
+    #scheduler = StepLR(optimizer, step_size=10, gamma=0.9)
     # 日志文件名可以自定义，以便区分
     log_name = 'full_data_training_log.txt'
     if 'scratch' in args.exp_name:
