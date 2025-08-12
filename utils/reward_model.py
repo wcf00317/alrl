@@ -39,6 +39,37 @@ class KAN_ActiveLearningRewardModel(nn.Module):
         return self.kan_network(x)
 
 
+# --- 新增MLP与KAN对比---
+class MLP_ActiveLearningRewardModel(nn.Module):
+    """
+    一个基于MLP的奖励模型，作为KAN模型的Baseline。
+    """
+
+    def __init__(self, input_dim, hidden_layers=[16, 8]):
+        """
+        初始化MLP奖励模型。
+
+        :param input_dim: 输入特征向量的维度 (例如，批次级特征是4)。
+        :param hidden_layers: 一个列表，定义了每个隐藏层的宽度。
+        """
+        super(MLP_ActiveLearningRewardModel, self).__init__()
+
+        layers = []
+        prev_dim = input_dim
+        for hidden_dim in hidden_layers:
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            prev_dim = hidden_dim
+
+        layers.append(nn.Linear(prev_dim, 1))  # 输出层，产生一个标量奖励值
+
+        self.mlp_network = nn.Sequential(*layers)
+
+    def forward(self, x):
+        """
+        前向传播，通过MLP网络。
+        """
+        return self.mlp_network(x)
 def get_batch_features(batch_entropies, batch_similarities):
     """
     将一个批次的信息聚合成一个特征向量，作为ALRM的输入。

@@ -8,7 +8,7 @@ import numpy as np
 from collections import namedtuple
 from copy import deepcopy
 import datetime  # 导入datetime来创建时间戳
-
+import torch.optim as optim
 import torch
 import torch.nn as nn
 import yaml
@@ -21,7 +21,7 @@ import pickle
 # --- 模型和工具导入 ---
 from models.model_utils import create_models, get_video_candidates, compute_state_for_har, select_action_for_har, \
     add_labeled_videos, optimize_model_conv, load_models_for_har
-from utils.reward_model import KAN_ActiveLearningRewardModel, get_batch_features
+from utils.reward_model import KAN_ActiveLearningRewardModel, get_batch_features, MLP_ActiveLearningRewardModel
 from torch.utils.data import Subset, DataLoader
 from data.data_utils import get_data
 from utils.final_utils import check_mkdir, create_and_load_optimizers, get_logfile
@@ -37,13 +37,6 @@ cudnn.deterministic = True
 def main():
     # --- 1. 初始化和配置加载 ---
     args = parser.get_arguments()
-    if getattr(args, 'config', None):
-        with open(args.config, 'r') as f:
-            config = yaml.safe_load(f)
-        for key, value in config.items():
-            # 使用setattr灵活地更新args
-            setattr(args, key, value)
-
     # --- 日志改进：创建带时间戳的唯一实验文件夹 ---
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     original_exp_name = args.exp_name
@@ -167,7 +160,7 @@ def main():
     print(f"第一阶段完成！偏好数据已保存至 {alrm_data_path}，共 {len(alrm_preference_data)} 对。")
 
     # 清理内存
-    del net, train_loader, train_set, val_loader, candidate_set, optimizer_main, main_loader
+    del net, train_loader, train_set, val_loader, optimizer_main, main_loader
     torch.cuda.empty_cache()
 
     # ===================================================================================
@@ -177,7 +170,21 @@ def main():
     print("                 第二阶段: 训练主动学习奖励模型 (ALRM)")
     print("=" * 50)
 
-    alrm_model = KAN_ActiveLearningRewardModel(input_dim=4, hidden_layers=[8, 4]).cuda()
+    if args.reward_model_type == 'kan':
+        alrm_model = KAN_ActiveLearningRewardModel(
+            input_dim=4,
+            grid_size=args.kan_grid_size,
+            spline_order=args.kan_spline_order,
+            hidden_layers=args.kan_hidden_layers
+        ).cuda()
+        print("使用 KAN 奖励模型进行训练。")
+    elif args.reward_model_type == 'mlp':
+        alrm_model = MLP_ActiveLearningRewardModel(input_dim=4, hidden_layers=[16, 8]).cuda()
+        print("使用 MLP 奖励模型 (Baseline) 进行训练。")
+    else:
+        raise ValueError(f"未知的奖励模型类型: {args.reward_model_type}")
+
+
     optimizer_alrm = optim.Adam(alrm_model.parameters(), lr=1e-4)
     training_successful = train_reward_model(alrm_model, alrm_preference_data, optimizer_alrm)
 
@@ -186,7 +193,7 @@ def main():
         return
 
     # 保存ALRM
-    alrm_save_path = os.path.join(exp_dir, 'kan_alrm_model.pth')
+    alrm_save_path = os.path.join(exp_dir, f'{args.reward_model_type}_alrm_model.pth')
     torch.save(alrm_model.state_dict(), alrm_save_path)
     print(f"第二阶段完成！ALRM模型已保存至 {alrm_save_path}")
 
@@ -222,7 +229,20 @@ def main():
                                                        lr_dqn=args.lr_dqn)
 
     # --- 加载训练好的ALRM ---
-    alrm_model = KAN_ActiveLearningRewardModel(input_dim=4, hidden_layers=[8, 4])
+    if args.reward_model_type == 'kan':
+        alrm_model = KAN_ActiveLearningRewardModel(
+            input_dim=4,
+            grid_size=args.kan_grid_size,
+            spline_order=args.kan_spline_order,
+            hidden_layers=args.kan_hidden_layers
+        )
+        print("为RL Agent加载 KAN 奖励模型。")
+    elif args.reward_model_type == 'mlp':
+        alrm_model = MLP_ActiveLearningRewardModel(input_dim=4, hidden_layers=[16, 8])
+        print("为RL Agent加载 MLP 奖励模型。")
+    else:
+        raise ValueError(f"未知的奖励模型类型: {args.reward_model_type}")
+
     alrm_model.load_state_dict(torch.load(alrm_save_path))
     alrm_model.cuda().eval()
     print("ALRM已加载，准备用于RL训练。")

@@ -1,129 +1,120 @@
+# 文件名: wcf00317/alrl/alrl-reward-model/utils/parser.py
+
 import json
 import os
-# utils/parser.py
 import argparse
 import yaml
 from easydict import EasyDict as edict
 
 
 def get_arguments():
-    # Step 0: Define default values
-    default_config = {
-        'ckpt_path': './checkpoints',
-        'data_path': '../hmdb51',
-        'exp_name': 'hmdb_exp',
-        'train_batch_size': 16,
-        'val_batch_size': 1,
-        'epoch_num': 10,
-        'lr': 0.0001,
-        'gamma': 0.998,
-        'gamma_scheduler_dqn': 0.97,
-        'weight_decay': 1e-4,
-        'input_size': [224, 224],
-        'scale_size': 0,
-        'momentum': 0.95,
-        'patience': 60,
-        'snapshot': 'last_jaccard_val.pth',
-        'checkpointer': False,
-        'load_weights': False,
-        'load_opt': False,
-        'optimizer': 'Adam',
-        'train': True,
-        'test': False,
-        'final_test': False,
-        'only_last_labeled': False,
-        'rl_pool': 50,
-        'al_algorithm': 'random',
-        'dataset': 'hmdb51',
-        'budget_labels': 100,
-        'num_each_iter': 1,
-        'region_size': [128, 128],
-        'lr_dqn': 0.0001,
-        'rl_buffer': 3200,
-        'rl_episodes': 50,
-        'dqn_bs': 16,
-        'dqn_gamma': 0.999,
-        'dqn_epochs': 1,
-        'bald_iter': 20,
-        'seed': 26,
-        'full_res': False,
-        'mmaction_config': None,
-    }
-
-    # Step 1: Pre-parse the --config argument
-    config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument('--config', type=str, default=None)
-    config_args, _ = config_parser.parse_known_args()
-
-    # Step 2: Load YAML config if provided
-    yaml_config = {}
-    if config_args.config is not None:
-        with open(config_args.config, 'r') as f:
-            yaml_config = yaml.safe_load(f)
-
-    # Step 3: Define the full argument parser
+    """
+    一个健壮的参数解析器，正确处理优先级：命令行 > YAML > 代码内默认值。
+    """
+    # 步骤 1: 创建主解析器，并定义程序所有已知的参数及其最低优先级的默认值
     parser = argparse.ArgumentParser(description="Reinforced active learning for HAR")
 
-    # ✨ THE FIX: Add the --config argument to the main parser too ✨
-    parser.add_argument('--config', type=str, help='Path to the YAML configuration file.')
+    # --- 这里是所有参数的“注册表”，确保解析器认识它们 ---
+    parser.add_argument('--config', type=str, default=None, help='Path to the YAML configuration file.')
 
-    for key in default_config.keys():
-        arg_type = type(default_config[key])
-        if isinstance(default_config[key], bool):
-            # This logic correctly handles boolean flags
-            parser.add_argument(f'--{key}', action='store_true', default=None)
-        elif isinstance(default_config[key], list):
-            parser.add_argument(f'--{key}', nargs='+', type=type(default_config[key][0]))
-        else:
-            parser.add_argument(f'--{key}', type=arg_type)
+    # 基本信息
+    parser.add_argument('--dataset', type=str, default='hmdb51')
+    parser.add_argument('--data_path', type=str, default='../hmdb51')
+    parser.add_argument('--ckpt_path', type=str, default='./checkpoints')
+    parser.add_argument('--exp_name', type=str, default='hmdb_exp')
+    parser.add_argument('--al_algorithm', type=str, default='random')
 
-    # Step 4: Parse command-line arguments
-    cli_args = vars(parser.parse_args())
+    # 数据处理
+    parser.add_argument('--input_size', type=int, default=112)
+    parser.add_argument('--scale_size', type=int, default=128)
+    parser.add_argument('--train_batch_size', type=int, default=32)
+    parser.add_argument('--val_batch_size', type=int, default=8)
+    parser.add_argument('--num_each_iter', type=int, default=5)
+    parser.add_argument('--workers', type=int, default=8)
 
-    # Step 5: Merge configurations with correct priority
-    final_args = {}
-    # Also include 'config' in the keys to iterate over
-    all_keys = list(default_config.keys()) + ['config']
-    for key in all_keys:
-        # Priority 1: Command-line arguments (if they are not None)
-        if key in cli_args and cli_args[key] is not None:
-            final_args[key] = cli_args[key]
-        # Priority 2: YAML file settings
-        elif key in yaml_config:
-            final_args[key] = yaml_config[key]
-        # Priority 3: Default values
-        elif key in default_config:
-            final_args[key] = default_config[key]
+    # 路径加载控制
+    parser.add_argument('--load_weights', action='store_true')
+    parser.add_argument('--load_opt', action='store_true')
+    parser.add_argument('--exp_name_toload', type=str, default=None)
+    parser.add_argument('--exp_name_toload_rl', type=str, default=None)
+    parser.add_argument('--snapshot', type=str, default='0')
+    parser.add_argument('--checkpointer', action='store_true')
+    parser.add_argument('--test', action='store_true')
+    parser.add_argument('--final_test', action='store_true')
+    parser.add_argument('--only_last_labeled', action='store_true')
 
-    # Special handling for boolean flags where presence means True
-    for key, value in default_config.items():
-        if isinstance(value, bool):
-            if cli_args.get(key) is None:  # Not specified on command line
-                if key in yaml_config:
-                    final_args[key] = yaml_config[key]
-                else:
-                    final_args[key] = default_config[key]
-            else:  # Specified on command line
-                final_args[key] = cli_args[key] if default_config[key] is False else not cli_args[key]
+    # 训练设置
+    parser.add_argument('--train', action='store_true', default=True)
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--optimizer', type=str, default='SGD')
+    parser.add_argument('--lr', type=float, default=0.0001)
+    parser.add_argument('--lr_dqn', type=float, default=0.0001)
+    parser.add_argument('--weight_decay', type=float, default=0.0005)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--gamma', type=float, default=0.95)
+    parser.add_argument('--gamma_scheduler_dqn', type=float, default=0.99)
+    parser.add_argument('--epoch_num', type=int, default=30)
+    parser.add_argument('--patience', type=int, default=10)
+    parser.add_argument('--al_train_epochs', type=int, default=15)
 
-    return edict(final_args)
+    # Active Learning 参数
+    parser.add_argument('--budget_labels', type=int, default=578)
+    parser.add_argument('--rl_pool', type=int, default=10)
+    parser.add_argument('--rl_episodes', type=int, default=10)
+    parser.add_argument('--rl_buffer', type=int, default=100)
+    parser.add_argument('--dqn_bs', type=int, default=5)
+    parser.add_argument('--dqn_gamma', type=float, default=0.99)
+
+    # MMACTION2 配置
+    parser.add_argument('--mmaction_config', type=str, default=None)
+    parser.add_argument('--model_cfg_path', type=str, default=None)
+    parser.add_argument('--model_ckpt_path', type=str, default=None)
+    parser.add_argument('--num_classes', type=int, default=51)
+    parser.add_argument('--embed_dim', type=int, default=4096)
+    parser.add_argument('--clip_len', type=int, default=16)
+    parser.add_argument('--num_clips', type=int, default=1)
+
+    # ALRM 和 KAN 相关配置
+    parser.add_argument('--reward_model_type', type=str, default='kan')
+    parser.add_argument('--kan_grid_size', type=int, default=5)
+    parser.add_argument('--kan_spline_order', type=int, default=3)
+    parser.add_argument('--kan_hidden_layers', nargs='+', type=int, default=[8, 4])
+    parser.add_argument('--exp_dir', type=str, default=None)
+
+    # 步骤 2: 第一次解析，只获取 config 文件路径
+    args, _ = parser.parse_known_args()
+
+    # 步骤 3: 如果 config 文件存在，加载它并将其中的值设置为新的默认值
+    if args.config and os.path.exists(args.config):
+        with open(args.config, 'r') as f:
+            yaml_config = yaml.safe_load(f)
+        # 将YAML中的值设为默认，这样命令行参数就可以覆盖它们
+        parser.set_defaults(**yaml_config)
+
+    # 步骤 4: 第二次（最终）解析。
+    # 这次会应用所有优先级：命令行 > YAML > 代码默认值
+    final_args = parser.parse_args()
+
+    return edict(vars(final_args))
+
 
 def save_arguments(args):
+    """保存最终的配置参数到实验目录的args.json文件中。"""
     print_args = {}
-    param_names = [elem for elem in dir(args) if not elem.startswith('_')]
+    args_dict = dict(args)
 
-    for name in param_names:
-        value = getattr(args, name)
-        # 检查是否是可以被 JSON 序列化的基本类型
+    print("\n--- Final Configuration ---")
+    for key in sorted(args_dict.keys()):
+        value = args_dict[key]
+        print(f'{key:<25}: {value}')
         if isinstance(value, (str, int, float, bool, list, dict, type(None))):
-            print_args[name] = value
-            print(f'[{name}]   {value}')
-        else:
-            print(f'[Skipped] {name} (type: {type(value)})')
+            print_args[key] = value
+    print("-------------------------\n")
 
-    if getattr(args, 'train', False):
-        path = os.path.join(args.ckpt_path, args.exp_name, 'args.json')
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+    if args.get('ckpt_path') and args.get('exp_name'):
+        exp_dir = os.path.join(args.ckpt_path, args.exp_name)
+        os.makedirs(exp_dir, exist_ok=True)
+        path = os.path.join(exp_dir, 'args.json')
         with open(path, 'w') as fp:
-            json.dump(print_args, fp, indent=2)
-        print('Args saved in ' + path)
+            json.dump(print_args, fp, indent=4)
+        print(f'Args saved in {path}')
