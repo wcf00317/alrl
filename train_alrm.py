@@ -25,13 +25,14 @@ def train_reward_model(alrm_model, alrm_dataset, optimizer, num_epochs=30, batch
     """
     Train the reward model using a ranking loss and KAN's regularization loss.
     """
-    if len(alrm_dataset) < batch_size:
-        print(f"Insufficient data ({len(alrm_dataset)} pairs) to start training.")
-        return False
+    effective_batch_size = min(batch_size, len(alrm_dataset))
+    if effective_batch_size < batch_size:
+        print(f"Dataset size ({len(alrm_dataset)}) is less than batch size ({batch_size}). "
+              f"Training with the full dataset as one batch.")
 
-    print(f"Starting to train ALRM with {len(alrm_dataset)} preference pairs...")
+    print(f"Starting to train ALRM with {effective_batch_size} preference pairs...")
     alrm_model.train()
-    data_loader = DataLoader(alrm_dataset, batch_size=batch_size, shuffle=True)
+    data_loader = DataLoader(alrm_dataset, batch_size=effective_batch_size, shuffle=True)
 
     for epoch in range(num_epochs):
         total_epoch_loss = 0

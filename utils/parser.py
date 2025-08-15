@@ -81,6 +81,14 @@ def get_arguments():
     parser.add_argument('--kan_hidden_layers', nargs='+', type=int, default=[8, 4])
     parser.add_argument('--exp_dir', type=str, default=None)
 
+    #在这里定义所有新的特征提取器参数
+    parser.add_argument('--use_statistical_features', action='store_true')
+    parser.add_argument('--use_diversity_feature', action='store_true')
+    parser.add_argument('--use_representativeness_feature', action='store_true')
+    parser.add_argument('--use_prediction_margin_feature', action='store_true')
+    parser.add_argument('--use_labeled_distance_feature', action='store_true')
+    parser.add_argument('--use_neighborhood_density_feature', action='store_true')
+
     # 步骤 2: 第一次解析，只获取 config 文件路径
     args, _ = parser.parse_known_args()
 

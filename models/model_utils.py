@@ -347,7 +347,9 @@ def compute_state_for_har(args, model, train_set, candidate_video_indices, label
 
         with torch.no_grad():
             # 1. 为了计算熵，我们仍然需要做一次完整的分类前向传播来获取概率
+            # print(video_tensor.shape)
             logits = model(video_tensor, return_loss=False)
+            logits = model.cls_head(logits)
             if logits.shape[0] > 1:
                 logits = logits.mean(dim=0, keepdim=True)
 

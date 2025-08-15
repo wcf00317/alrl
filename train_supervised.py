@@ -78,8 +78,8 @@ def main(args):
                                            checkpointer=False, load_opt=False)[0]
 
 
-    scheduler = ExponentialLR(optimizer, gamma=args.gamma)
-    #scheduler = StepLR(optimizer, step_size=10, gamma=0.9)
+    #scheduler = ExponentialLR(optimizer, gamma=args.gamma)
+    torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 40], gamma=0.1)
     # 日志文件名可以自定义，以便区分
     log_name = 'full_data_training_log.txt'
     if 'scratch' in args.exp_name:
