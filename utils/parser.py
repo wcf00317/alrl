@@ -59,6 +59,8 @@ def get_arguments():
 
     # Active Learning 参数
     parser.add_argument('--budget_labels', type=int, default=578)
+    parser.add_argument('--initial_labeled_ratio', type=float, default=0.05,
+                        help='The initial ratio of labeled data to start with.')
     parser.add_argument('--rl_pool', type=int, default=10)
     parser.add_argument('--rl_episodes', type=int, default=10)
     parser.add_argument('--rl_buffer', type=int, default=100)

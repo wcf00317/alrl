@@ -50,6 +50,7 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
         for inputs, labels, idx in train_pbar:
             i += 1
             inputs, labels = inputs.cuda(), labels.cuda()
+            inputs = inputs.unsqueeze(1)
             batch_size = inputs.shape[0]
             num_clips = inputs.shape[1]
             optimizer.zero_grad()
@@ -77,8 +78,11 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
         with torch.no_grad():
             for inputs, labels, idx in val_pbar:
                 inputs, labels = inputs.cuda(), labels.cuda()
+                inputs = inputs.unsqueeze(1)
                 batch_size = inputs.shape[0]
                 num_clips = inputs.shape[1]
+                # print(inputs.shape)
+                # print("++++++++++++++++++")
                 outputs = net(inputs, return_loss=False)
                 outputs = net.cls_head(outputs)
                 outputs_reshaped = outputs.view(batch_size, num_clips, -1)
@@ -115,6 +119,7 @@ def train_har_for_reward(net, train_loader, val_loader, optimizer, criterion, ar
     for epoch in range(args.al_train_epochs):
         for inputs, labels, _ in train_loader:
             inputs, labels = inputs.cuda(), labels.cuda()
+            # inputs = inputs.unsqueeze(1)
             batch_size = inputs.shape[0]
             num_clips = inputs.shape[1]
             optimizer.zero_grad()
@@ -129,6 +134,7 @@ def train_har_for_reward(net, train_loader, val_loader, optimizer, criterion, ar
     with torch.no_grad():
         for inputs, labels, _ in val_loader:
             inputs, labels = inputs.cuda(), labels.cuda()
+            # inputs = inputs.unsqueeze(1)
             batch_size = inputs.shape[0]
             num_clips = inputs.shape[1]
             outputs = net(inputs, return_loss=False)
@@ -333,7 +339,7 @@ def main(args):
         # 重新加载数据，得到一个干净的、只有初始标注的 train_set
         _, test_train_set, _, _ = get_data(data_path=args.data_path, tr_bs=args.train_batch_size,
                                            vl_bs=args.val_batch_size, n_workers=args.workers, clip_len=args.clip_len,
-                                           transform_type='c3d')
+                                           )
 
         # 3. 获取用于记录测试结果的日志文件
         test_logger, _, _ = get_logfile(args.ckpt_path, args.exp_name, checkpointer=False, snapshot=None,

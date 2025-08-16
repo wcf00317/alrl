@@ -18,6 +18,8 @@ from torch.backends import cudnn
 from torch.optim.lr_scheduler import ExponentialLR
 from tqdm import tqdm
 import pickle
+from data.hmdb import HmdbDataset
+from data.ucf import UcfDataset
 
 # --- 模型和工具导入 ---
 from models.model_utils import create_models, get_video_candidates, compute_state_for_har, select_action_for_har, \
@@ -79,8 +81,13 @@ def main():
     net.cuda()
 
     train_loader, train_set, val_loader, _ = get_data(
-        data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
-        n_workers=args.workers, clip_len=args.clip_len, transform_type='c3d'
+        data_path=args.data_path,
+        tr_bs=args.train_batch_size,
+        vl_bs=args.val_batch_size,
+        dataset_name=args.dataset,  # <-- 关键：传入 dataset_name
+        n_workers=args.workers,
+        clip_len=args.clip_len,
+        initial_labeled_ratio=args.initial_labeled_ratio # 加载100%的训练数据
     )
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer_main = create_and_load_optimizers(net=net, opt_choice=args.optimizer, lr=args.lr, wd=args.weight_decay,
@@ -163,7 +170,7 @@ def main():
         pickle.dump(alrm_preference_data, f)
     print(f"第一阶段完成！偏好数据已保存至 {alrm_data_path}，共 {len(alrm_preference_data)} 对。")
 
-    del net, train_loader, train_set, val_loader, optimizer_main, main_loader
+    del net, train_loader,train_set, val_loader, optimizer_main, main_loader
     torch.cuda.empty_cache()
 
     # ===================================================================================
@@ -223,7 +230,7 @@ def main():
 
     train_loader, train_set, val_loader, _ = get_data(
         data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
-        n_workers=args.workers, clip_len=args.clip_len, transform_type='c3d'
+        n_workers=args.workers, clip_len=args.clip_len, transform_type='c3d',initial_labeled_ratio=args.initial_labeled_ratio
     )
     optimizer, optimizerP = create_and_load_optimizers(net=net, opt_choice=args.optimizer, lr=args.lr,
                                                        wd=args.weight_decay,

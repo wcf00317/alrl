@@ -44,6 +44,7 @@ workers: 8
 al_train_epochs: 15
 
 # Active Learning 参数
+initial_labeled_ratio: 0.05
 budget_labels: 578
 rl_pool: 10
 rl_episodes: 10

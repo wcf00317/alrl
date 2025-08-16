@@ -9,7 +9,7 @@ import yaml
 import torch
 import torch.nn as nn
 from torch.backends import cudnn
-from torch.optim.lr_scheduler import ExponentialLR,StepLR
+from torch.optim.lr_scheduler import ExponentialLR,StepLR,MultiStepLR
 from tqdm import tqdm
 from torch.utils.data import DataLoader # <-- THIS LINE WAS MISSING
 
@@ -63,9 +63,13 @@ def main(args):
     # 注意：这里我们不再需要candidate_set，并且train_set会包含所有训练视频
     # initial_labeled_ratio 设置为1.0来加载所有训练数据
     _, train_set, val_loader, _ = get_data(
-        data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
-        n_workers=args.workers, clip_len=args.clip_len, transform_type='c3d',
-        initial_labeled_ratio=1.0 # 加载100%的训练数据
+        data_path=args.data_path,
+        tr_bs=args.train_batch_size,
+        vl_bs=args.val_batch_size,
+        dataset_name=args.dataset,  # <-- 关键：传入 dataset_name
+        n_workers=args.workers,
+        clip_len=args.clip_len,
+        initial_labeled_ratio=1.0  # 加载100%的训练数据
     )
     # 创建一个包含所有样本的DataLoader
     full_train_loader = DataLoader(train_set, batch_size=args.train_batch_size, shuffle=True,
@@ -79,7 +83,7 @@ def main(args):
 
 
     #scheduler = ExponentialLR(optimizer, gamma=args.gamma)
-    torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 40], gamma=0.1)
+    scheduler = MultiStepLR(optimizer, milestones=[20, 40], gamma=0.1)
     # 日志文件名可以自定义，以便区分
     log_name = 'full_data_training_log.txt'
     if 'scratch' in args.exp_name:
@@ -91,7 +95,7 @@ def main(args):
 
     # --- 5. 执行训练 ---
     if args.train:
-        print(f"--- 开始在HMDB51全量数据集上进行有监督训练 ---")
+        print(f"--- 开始在 {args.dataset.upper()} 全量数据集上进行有监督训练 ---")
         print(f"模型加载路径: {args.model_ckpt_path or 'None (Train from scratch)'}")
         print(f"日志将保存在: {os.path.join(args.ckpt_path, args.exp_name, log_name)}")
 
@@ -111,7 +115,7 @@ def main(args):
             final_train=True # 这是一个完整的训练过程
         )
         print(f"\n--- 训练结束 ---")
-        print(f"在HMDB51全量数据上的最佳验证准确率为: {final_val_acc:.4f}")
+        print(f"在 {args.dataset.upper()} 全量数据上的最佳验证准确率为: {final_val_acc:.4f}")
         logger.close()
 
 if __name__ == '__main__':
