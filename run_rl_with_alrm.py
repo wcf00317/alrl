@@ -50,7 +50,6 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
         for inputs, labels, idx in train_pbar:
             i += 1
             inputs, labels = inputs.cuda(), labels.cuda()
-            inputs = inputs.unsqueeze(1)
             batch_size = inputs.shape[0]
             num_clips = inputs.shape[1]
             optimizer.zero_grad()
@@ -78,11 +77,9 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
         with torch.no_grad():
             for inputs, labels, idx in val_pbar:
                 inputs, labels = inputs.cuda(), labels.cuda()
-                inputs = inputs.unsqueeze(1)
                 batch_size = inputs.shape[0]
                 num_clips = inputs.shape[1]
-                # print(inputs.shape)
-                # print("++++++++++++++++++")
+
                 outputs = net(inputs, return_loss=False)
                 outputs = net.cls_head(outputs)
                 outputs_reshaped = outputs.view(batch_size, num_clips, -1)
