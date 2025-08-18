@@ -57,6 +57,11 @@ class UnifiedFeatureExtractor:
             self.active_features.append('labeled_distance')
             self.feature_dim += 2  # 均值和标准差
             print("  - Distance to Labeled Set Feature: ENABLED")
+
+        if getattr(args, 'use_temporal_consistency_feature', False):
+            self.active_features.append('temporal_consistency')
+            self.feature_dim += 2 # 均值和标准差
+            print("  - Temporal Consistency Feature: ENABLED")
         # --- NEW: 结束 ---
 
         if not self.active_features:
@@ -65,17 +70,12 @@ class UnifiedFeatureExtractor:
         print(f"Total feature dimension: {self.feature_dim}")
         print("------------------------------------------\n")
 
-    def extract(self, batch_video_indices, model, train_set, all_unlabeled_embeddings=None,
-                all_labeled_embeddings=None):  # --- NEW: 增加 all_labeled_embeddings 参数 ---
+    def extract(self, batch_video_indices, model, train_set, all_unlabeled_embeddings=None, all_labeled_embeddings=None):
         if not batch_video_indices:
             return torch.zeros(self.feature_dim)
 
-        # --- MODIFIED: 修改函数调用以获取 probs ---
         batch_embeddings, batch_probs = self.get_embeddings_and_probs(batch_video_indices, model, train_set)
-
         feature_tensors = []
-
-        # --- 按需计算和拼接特征 ---
 
         if 'statistical' in self.active_features:
             # --- MODIFIED: 从 probs 计算熵 ---
@@ -115,7 +115,7 @@ class UnifiedFeatureExtractor:
                 density_score = 1.0 / (1.0 + mean_knn_dist)
             feature_tensors.append(torch.tensor([density_score]))
 
-        # --- NEW: 增加新特征的计算逻辑 ---
+            # --- NEW: 增加新特征的计算逻辑 ---
         if 'prediction_margin' in self.active_features:
             # 对每个样本的概率分布进行排序
             sorted_probs, _ = torch.sort(batch_probs, dim=1, descending=True)
@@ -136,8 +136,34 @@ class UnifiedFeatureExtractor:
                 mean_dist = min_dists.mean().item()
                 std_dist = min_dists.std().item() if len(min_dists) > 1 else 0.0
             feature_tensors.append(torch.tensor([mean_dist, std_dist]))
-        # --- NEW: 结束 ---
+        # --- 新增特征的计算 ---
+        if 'temporal_consistency' in self.active_features:
+            batch_fast_embeds = []
+            batch_slow_embeds = []
+            with torch.no_grad():
+                for vid_idx in batch_video_indices:
+                    # 1. 独立获取快慢速视频
+                    fast_clip, slow_clip = train_set.get_video_multi_speed(vid_idx, fast_frames=16, slow_frames=8)
 
+                    # 2. 时间上采样以适配C3D
+                    if slow_clip.shape[2] == 8:
+                        slow_clip = slow_clip.repeat_interleave(2, dim=2)
+
+                    # 3. 独立提取特征
+                    fast_embed = model.extract_feat(fast_clip.unsqueeze(0).cuda())[0].cpu()
+                    slow_embed = model.extract_feat(slow_clip.unsqueeze(0).cuda())[0].cpu()
+
+                    batch_fast_embeds.append(fast_embed)
+                    batch_slow_embeds.append(slow_embed)
+
+            batch_fast_embeds = torch.cat(batch_fast_embeds, dim=0)
+            batch_slow_embeds = torch.cat(batch_slow_embeds, dim=0)
+
+            # 4. 计算并拼接特征
+            inconsistency_scores = 1.0 - F.cosine_similarity(batch_fast_embeds, batch_slow_embeds, dim=1)
+            mean_inconsistency = inconsistency_scores.mean().item()
+            std_inconsistency = inconsistency_scores.std().item() if len(inconsistency_scores) > 1 else 0.0
+            feature_tensors.append(torch.tensor([mean_inconsistency, std_inconsistency]))
         return torch.cat(feature_tensors)
 
     # --- MODIFIED: 重命名函数并返回 probs ---

@@ -148,3 +148,39 @@ class ActiveLearningVideoDataset(Dataset):
             raise RuntimeError("此数据集未设置 eval_transform！")
 
         return transformed_clip.unsqueeze(0)
+
+    def get_video_multi_speed(self, vid_idx, fast_frames, slow_frames):
+        """
+        为同一个视频，以两种不同的帧率采样并返回两个片段。
+        所有解码操作都在CPU上进行，与您仓库中的其他函数保持一致。
+        """
+        video_name, _, _ = self.video_list_info[vid_idx]
+        full_path = os.path.join(self.video_dir, video_name)
+        # 始终在 CPU 上解码
+        video_reader = decord.VideoReader(full_path, ctx=decord.cpu(0))
+        total_frames = len(video_reader)
+
+        clips = []
+        for num_frames in [fast_frames, slow_frames]:
+            # 为了简化，我们统一采用中心采样
+            start_frame = (total_frames - num_frames) // 2
+            indices = np.arange(start_frame, start_frame + num_frames)
+            if total_frames < num_frames:
+                indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
+
+            # 从CPU上的解码结果创建Tensor
+            clip = torch.from_numpy(video_reader.get_batch(indices).asnumpy()).permute(0, 3, 1, 2).float()
+
+            # 应用评估阶段的transform
+            if self.eval_transform:
+                transformed_clip = self.eval_transform(clip)
+            else:
+                raise RuntimeError("此数据集未设置 eval_transform！")
+
+            # 确保返回的张量有批次维度
+            if transformed_clip.dim() == 4:
+                transformed_clip = transformed_clip.unsqueeze(0)
+
+            clips.append(transformed_clip)
+
+        return clips[0], clips[1]  # 返回 (fast_clip, slow_clip)

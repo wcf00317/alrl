@@ -91,6 +91,8 @@ def get_arguments():
     parser.add_argument('--use_labeled_distance_feature', action='store_true')
     parser.add_argument('--use_neighborhood_density_feature', action='store_true')
 
+    parser.add_argument('--use_temporal_consistency_feature', action='store_true',
+                        help='(策略) 启用基于快慢速视频特征差异的策略。')
     # 步骤 2: 第一次解析，只获取 config 文件路径
     args, _ = parser.parse_known_args()
 

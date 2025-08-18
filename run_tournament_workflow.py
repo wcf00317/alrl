@@ -210,7 +210,7 @@ def main():
             spline_order=args.kan_spline_order, hidden_layers=args.kan_hidden_layers
         )
     elif args.reward_model_type == 'mlp':
-        hidden_dim1 = max(16, input_dim * 4);
+        hidden_dim1 = max(16, input_dim * 4)
         hidden_dim2 = max(8, input_dim * 2)
         alrm_model = MLP_ActiveLearningRewardModel(input_dim=input_dim, hidden_layers=[hidden_dim1, hidden_dim2])
     else:

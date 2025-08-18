@@ -36,6 +36,8 @@ def get_strategy_pool(args):
         strategy_pool.append({'name': 'labeled_distance'})
     if args.use_neighborhood_density_feature:
         strategy_pool.append({'name': 'neighborhood_density'})
+    if args.use_temporal_consistency_feature:
+        strategy_pool.append({'name': 'temporal_consistency'})
 
     print(f"动态策略池已创建，共 {len(strategy_pool)} 个策略: {[s['name'] for s in strategy_pool]}")
     return strategy_pool
@@ -106,12 +108,46 @@ def generate_candidate_batches(args, strategy_pool, model, train_set, all_unlabe
     return candidate_batches
 
 
+def precompute_strategy_data(args, net, train_set):
+    # ... (此函数保持不变) ...
+    print("正在为所有策略预计算所需数据...")
+    unlabeled_indices = train_set.get_candidates_video_ids()
+    all_fast_embeds, all_slow_embeds, all_probs = [], [], []
+    with torch.no_grad():
+        batch_size = args.val_batch_size
+        for i in tqdm(range(0, len(unlabeled_indices), batch_size), desc="Pre-computing strategy data"):
+            batch_indices = unlabeled_indices[i:i + batch_size]
+            fast_clips, slow_clips = [], []
+            for vid_idx in batch_indices:
+                fast_clip, slow_clip = train_set.get_video_multi_speed(vid_idx, fast_frames=16, slow_frames=8)
+                fast_clips.append(fast_clip)
+                slow_clips.append(slow_clip)
+            fast_batch_tensor = torch.stack(fast_clips, dim=0).cuda()
+            slow_batch_tensor = torch.stack(slow_clips, dim=0).cuda()
+
+            slow_batch_tensor = slow_batch_tensor.repeat_interleave(2, dim=3)
+
+            fast_embeds = net.extract_feat(fast_batch_tensor)[0]
+            slow_embeds = net.extract_feat(slow_batch_tensor)[0]
+            logits = net.cls_head(fast_embeds)
+            probs = F.softmax(logits, dim=1).cpu()
+            all_fast_embeds.append(fast_embeds.cpu())
+            all_slow_embeds.append(slow_embeds.cpu())
+            all_probs.append(probs)
+    return {
+        "unlabeled_indices": unlabeled_indices,
+        "fast_embeds": torch.cat(all_fast_embeds, dim=0),
+        "slow_embeds": torch.cat(all_slow_embeds, dim=0),
+        "probs": torch.cat(all_probs, dim=0)
+    }
+
 def run_tournament_round(args, net, train_set, val_loader, criterion, feature_extractor, past_val_acc):
     """
     (V2) 执行一轮完整的、基于动态策略池的锦标赛。
     """
     # --- 1. 策略锦标赛 - 生成海量候选 ---
     strategy_pool = get_strategy_pool(args)
+    # strategy_data = precompute_strategy_data(args, net, train_set)
     all_unlabeled_embeds = get_all_unlabeled_embeddings(args, net, train_set)
     all_labeled_embeds = get_all_labeled_embeddings(args, net, train_set)
 
