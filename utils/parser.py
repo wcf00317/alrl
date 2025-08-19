@@ -22,7 +22,10 @@ def get_arguments():
     parser.add_argument('--data_path', type=str, default='../hmdb51')
     parser.add_argument('--ckpt_path', type=str, default='./checkpoints')
     parser.add_argument('--exp_name', type=str, default='hmdb_exp')
-    parser.add_argument('--al_algorithm', type=str, default='random')
+    # parser.add_argument('--al_algorithm', type=str, default='random')
+    parser.add_argument('--al_algorithm', type=str, default='random',
+                        choices=['random', 'dqn', 'minimalist_tournament', 'stage1_tournament'],
+                        help='The active learning algorithm to use.')
 
     # 数据处理
     parser.add_argument('--input_size', type=int, default=112)
@@ -66,7 +69,16 @@ def get_arguments():
     parser.add_argument('--rl_buffer', type=int, default=100)
     parser.add_argument('--dqn_bs', type=int, default=5)
     parser.add_argument('--dqn_gamma', type=float, default=0.99)
+    parser.add_argument('--egl_strategy', type=str, default='adaptive_k',
+                        choices=['adaptive_k', 'approx', 'standard'],
+                        help='要使用的EGL计算策略: adaptive_k (自适应), approx (快速近似), standard (理论标准版).')
 
+    parser.add_argument('--nomination_ratio_c', type=float, default=3.0,
+                        help='Ratio to determine nomination pool size (c * budget).')
+    parser.add_argument('--run_sanity_check', action='store_true',
+                        help='If set, run the optional sanity check duel against a random batch.')
+    parser.add_argument('--distance_threshold_alpha', type=float, default=0.9,
+                        help='Scaling factor for the median distance threshold in pruning step (e.g., 0.9).')
     # MMACTION2 配置
     parser.add_argument('--mmaction_config', type=str, default=None)
     parser.add_argument('--model_cfg_path', type=str, default=None)
