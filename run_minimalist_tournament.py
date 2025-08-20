@@ -18,7 +18,7 @@ import pickle
 
 # --- 核心导入 ---
 from models.minimalist_tournament_selection import MinimalistTournamentSelector
-from utils.feature_extractor import UnifiedFeatureExtractor
+from utils.feature_extractor import UnifiedFeatureExtractor, get_all_unlabeled_embeddings, get_all_labeled_embeddings
 from models.model_utils import create_models, add_labeled_videos, optimize_model_conv, select_action_for_har, \
     compute_state_for_har
 from utils.reward_model import KAN_ActiveLearningRewardModel, MLP_ActiveLearningRewardModel
@@ -151,7 +151,7 @@ def main():
         for idx1 in range(len(ranked_indices)):
             for idx2 in range(idx1 + 1, len(ranked_indices)):
                 winner_idx, loser_idx = ranked_indices[idx1], ranked_indices[idx2]
-                if finalist_rewards[winner_idx] > finalist_rewards[loser_idx] + 0.001:
+                if finalist_rewards[winner_idx] > finalist_rewards[loser_idx] + 0.01:
                     alrm_preference_data.append(
                         {'winner': finalist_features[winner_idx], 'loser': finalist_features[loser_idx]})
 
@@ -176,10 +176,17 @@ def main():
 
     input_dim = feature_extractor.feature_dim
     if args.reward_model_type == 'kan':
-        alrm_model = KAN_ActiveLearningRewardModel(input_dim=input_dim, hidden_layers=args.kan_hidden_layers).cuda()
+        alrm_model = KAN_ActiveLearningRewardModel(
+            input_dim=input_dim,  # 使用动态维度
+            grid_size=args.kan_grid_size,
+            spline_order=args.kan_spline_order,
+            hidden_layers=args.kan_hidden_layers
+        ).cuda()
     else:
+        hidden_dim1 = max(16, input_dim * 4)
+        hidden_dim2 = max(8, input_dim * 2)
         alrm_model = MLP_ActiveLearningRewardModel(input_dim=input_dim,
-                                                   hidden_layers=[input_dim * 4, input_dim * 2]).cuda()
+                                                   hidden_layers=[hidden_dim1, hidden_dim2]).cuda()
 
     optimizer_alrm = optim.Adam(alrm_model.parameters(), lr=1e-4)
     train_reward_model(alrm_model, alrm_preference_data, optimizer_alrm)
@@ -234,6 +241,12 @@ def main():
     num_al_steps = (args.budget_labels - train_set_stage3.get_num_labeled_videos()) // args.num_each_iter
     for i in range(num_al_steps):
         print(f'\n--- RL训练回合 {i + 1}/{num_al_steps} ---')
+        all_unlabeled_embeds = None
+        all_labeled_embeds = None
+        if 'representativeness' in feature_extractor.active_features or 'neighborhood_density' in feature_extractor.active_features:
+            all_unlabeled_embeds = get_all_unlabeled_embeddings(args, net_stage3, train_set_stage3)
+        if 'labeled_distance' in feature_extractor.active_features:
+            all_labeled_embeds = get_all_labeled_embeddings(args, net_stage3, train_set_stage3)
 
         current_state, candidate_indices, _ = compute_state_for_har(args, net_stage3, train_set_stage3,
                                                                     train_set_stage3.get_candidates_video_ids(),
@@ -241,7 +254,7 @@ def main():
         action, steps_done, _ = select_action_for_har(args, policy_net, current_state, steps_done)
         actual_video_ids_to_label = [candidate_indices[idx] for idx in action.tolist()]
 
-        batch_features = feature_extractor.extract(actual_video_ids_to_label, net_stage3, train_set_stage3).cuda()
+        batch_features = feature_extractor.extract(actual_video_ids_to_label, net_stage3, train_set_stage3, all_unlabeled_embeds, all_labeled_embeds).cuda()
         with torch.no_grad():
             predicted_reward = alrm_model(batch_features.unsqueeze(0)).item()
 
