@@ -105,6 +105,9 @@ def get_arguments():
 
     parser.add_argument('--use_temporal_consistency_feature', action='store_true',
                         help='(策略) 启用基于快慢速视频特征差异的策略。')
+    parser.add_argument('--use_cross_view_consistency_feature', action='store_true',
+                        help='(策略) 启用基于不同空间增强视角的特征一致性策略。')
+    parser.add_argument('--augment_level', type=int, default=1, help='为Cross-view Consistency设置第二视角的增强等级 (整数，例如 1, 2, 3)。')
     # 步骤 2: 第一次解析，只获取 config 文件路径
     args, _ = parser.parse_known_args()
 

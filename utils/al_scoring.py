@@ -22,6 +22,7 @@ def precompute_data_for_scoring(args, model, video_indices, train_set, batch_siz
 
     all_embeddings, all_probs = [], []
     all_fast_embeds, all_slow_embeds = [], []
+    all_view2_embeds = []
 
     # 1. 批量处理未标注数据
     with torch.no_grad():
@@ -35,17 +36,27 @@ def precompute_data_for_scoring(args, model, video_indices, train_set, batch_siz
             all_probs.append(probs.cpu())
 
             # ⚡ 快/慢速版本仍需逐个 clip 构造
-            fast_clips, slow_clips = [], []
-            for vid_idx in batch_indices:
-                fast, slow = train_set.get_video_multi_speed(vid_idx, fast_frames=16, slow_frames=8)
-                fast_clips.append(fast)
-                slow_clips.append(slow.repeat_interleave(2, dim=2))
+            if getattr(args, 'use_temporal_consistency_feature', False):
+                fast_clips, slow_clips = [], []
+                for vid_idx in batch_indices:
+                    fast, slow = train_set.get_video_multi_speed(vid_idx, fast_frames=16, slow_frames=8)
+                    fast_clips.append(fast)
+                    #slow_clips.append(slow.repeat_interleave(2, dim=2))
+                    slow_upsampled = F.interpolate(slow, size=(16, slow.shape[3], slow.shape[4]), mode='trilinear',
+                                                   align_corners=False)
+                    slow_clips.append(slow_upsampled)
 
-            fast_features, _ = ufe.get_embeddings_and_probs(batch_indices, model, train_set)
-            slow_features, _ = ufe.get_embeddings_and_probs(batch_indices, model, train_set)
+                fast_features, _ = ufe.get_embeddings_and_probs(batch_indices, model, train_set, video_tensors=fast_clips)
+                slow_features, _ = ufe.get_embeddings_and_probs(batch_indices, model, train_set, video_tensors=slow_clips)
 
-            all_fast_embeds.append(fast_features.cpu())
-            all_slow_embeds.append(slow_features.cpu())
+                all_fast_embeds.append(fast_features.cpu())
+                all_slow_embeds.append(slow_features.cpu())
+
+            if getattr(args, 'use_cross_view_consistency_feature', False):
+                view2_clips = [train_set.get_video_augmented_views(vid_idx)[1] for vid_idx in batch_indices]
+                view2_features, _ = ufe.get_embeddings_and_probs(batch_indices, model, train_set,
+                                                                 video_tensors=view2_clips)
+                all_view2_embeds.append(view2_features.cpu())
 
     # 2. 已标注数据
     labeled_indices = list(train_set.labeled_video_ids)
@@ -64,7 +75,8 @@ def precompute_data_for_scoring(args, model, video_indices, train_set, batch_siz
         'probs': torch.cat(all_probs, dim=0) if all_probs else torch.empty(0),
         'labeled_embeddings': torch.cat(labeled_embeddings, dim=0) if labeled_embeddings else None,
         'fast_embeds': torch.cat(all_fast_embeds, dim=0) if all_fast_embeds else torch.empty(0),
-        'slow_embeds': torch.cat(all_slow_embeds, dim=0) if all_slow_embeds else torch.empty(0)
+        'slow_embeds': torch.cat(all_slow_embeds, dim=0) if all_slow_embeds else torch.empty(0),
+        'view2_embeds': torch.cat(all_view2_embeds, dim=0) if all_view2_embeds else torch.empty(0)
     }
 
 
@@ -337,3 +349,9 @@ def compute_egl_score_approx(model, video_indices, train_set, batch_size=16):
 
     model.zero_grad()
     return torch.tensor(all_egl_scores, dtype=torch.float32)
+def compute_cross_view_consistency_score(precomputed_data):
+    view1_embeds = precomputed_data['embeddings']
+    view2_embeds = precomputed_data['view2_embeds']
+    if view1_embeds.shape[0] == 0 or view2_embeds.shape[0] == 0:
+        return torch.empty(0)
+    return 1.0 - F.cosine_similarity(view1_embeds, view2_embeds, dim=1)

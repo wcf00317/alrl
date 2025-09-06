@@ -150,8 +150,8 @@ def main():
 
         # 4. 使用新的 feature_extractor 提取特征
         print("正在为候选批次提取特征...")
-        features_A = feature_extractor.extract(batch_A_indices, net, train_set, all_unlabeled_embeds, all_labeled_embeds)
-        features_B = feature_extractor.extract(batch_B_indices, net, train_set, all_unlabeled_embeds, all_labeled_embeds)
+        features_A = feature_extractor.extract_emb(batch_A_indices, net, train_set, all_unlabeled_embeds, all_labeled_embeds)
+        features_B = feature_extractor.extract_emb(batch_B_indices, net, train_set, all_unlabeled_embeds, all_labeled_embeds)
 
         if abs(true_reward_A - true_reward_B) > 0.001:
             alrm_preference_data.append(
@@ -288,7 +288,7 @@ def main():
         action, steps_done, _ = select_action_for_har(args, policy_net, current_state, steps_done)
         actual_video_ids_to_label = [candidate_indices[idx] for idx in action.tolist()]
 
-        batch_features = feature_extractor.extract(
+        batch_features = feature_extractor.extract_emb(
             actual_video_ids_to_label, net, train_set, all_unlabeled_embeds, all_labeled_embeds
         ).cuda()
 

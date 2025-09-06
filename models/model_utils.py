@@ -33,10 +33,33 @@ def create_models(dataset, model_cfg_path, model_ckpt_path, num_classes,
     # Step 1: 初始化视频分类模型（例如C3D、VideoMAE、TSN等）
     model = init_recognizer(
         config=model_cfg_path,
-        checkpoint=model_ckpt_path,
+        checkpoint=None,
         device='cuda'
     )
+    if model_ckpt_path:
+        print(f"Manually loading and fixing checkpoint from: {model_ckpt_path}")
+        # 使用 weights_only=True 是更安全的做法
+        checkpoint = torch.load(model_ckpt_path, map_location='cpu', weights_only=True)
 
+        # 如果权重在一个 'state_dict' 键下，先取出来
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint
+
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            # 检查是否是需要添加前缀的 backbone 权重
+            if not k.startswith('cls_head'):
+                new_key = 'backbone.' + k
+                new_state_dict[new_key] = v
+            else:
+                # 如果是 cls_head 的权重，则保持原样 (虽然本次加载中不需要)
+                new_state_dict[k] = v
+
+        # 使用 load_state_dict 加载修复后的权重，strict=False 允许 cls_head 不匹配
+        model.load_state_dict(new_state_dict, strict=False)
+        print("Checkpoint loaded successfully after fixing keys.")
     print('HAR Backbone model created from MMACTION2.')
 
     # Step 2: 策略网络（DQN或Transformer）

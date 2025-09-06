@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader, Subset
 from torchvision.transforms import Compose, Lambda
 import torch.nn.functional as F
 import torchvision.transforms as T
+from torchvision.transforms import functional as F_vision
 
 # --- 动态导入所有数据集类 ---
 from data.hmdb import HmdbDataset
@@ -22,9 +23,15 @@ def seed_worker(worker_id):
 
 # --- 辅助函数 ---
 def resize_short_side(clip, size, interpolation=T.InterpolationMode.BILINEAR):
+    # clip shape: (T, C, H, W)
     t, c, h, w = clip.shape
-    new_h, new_w = (int(size * h / w), size) if h > w else (size, int(size * w / h))
-    return torch.stack([T.functional.resize(frame, [new_h, new_w], interpolation=interpolation) for frame in clip])
+    if w < h:
+        new_w = size
+        new_h = int(size * h / w)
+    else:
+        new_h = size
+        new_w = int(size * w / h)
+    return torch.stack([F_vision.resize(frame, [new_h, new_w], interpolation=interpolation) for frame in clip])
 
 
 def crop_clip(clip, crop_size, crop_type='center'):
@@ -43,7 +50,7 @@ def crop_clip(clip, crop_size, crop_type='center'):
 
 def flip_clip(clip, flip_ratio=0.5):
     if torch.rand(1) < flip_ratio:
-        return torch.stack([T.functional.hflip(frame) for frame in clip])
+        return torch.stack([F_vision.hflip(frame) for frame in clip])
     return clip
 
 
@@ -60,6 +67,7 @@ def get_data(
         dataset_name,  # <-- 关键：直接从 config 传入
         n_workers=4,
         clip_len=16,
+        augment_level=None,
         split_dir='.',
         video_dirname='videos',
         initial_labeled_ratio=0.05,
@@ -82,13 +90,77 @@ def get_data(
     else:
         raise ValueError(f"Unknown dataset: '{dataset_name}'. Supported datasets are 'ucf' or 'hmdb'.")
 
+    if augment_level is not None:
+        print(f"为第二视角启用数据增强，等级: {augment_level}")
+        def apply_pil_transform_to_clip(clip, pil_transform):
+            # clip: (T, C, H, W) tensor
+            transformed_frames = []
+            for frame_tensor in clip: # frame_tensor is (C, H, W)
+                pil_image = F_vision.to_pil_image(frame_tensor.byte())
+                transformed_pil = pil_transform(pil_image)
+                transformed_tensor = F_vision.to_tensor(transformed_pil) * 255.0
+                transformed_frames.append(transformed_tensor)
+            return torch.stack(transformed_frames)
+
+        def apply_frame_level_transform(clip, transform):
+            # torchvision transforms expect (C, H, W)
+            clip_chw = clip.permute(1, 0, 2, 3).squeeze(0)  # TCHW -> CTHW
+            return torch.stack([transform(frame) for frame in clip_chw.permute(1, 0, 2, 3)]).permute(1, 0, 2, 3)
+
+        if augment_level == 1: # 轻度
+            aug_list = [Lambda(lambda clip: apply_pil_transform_to_clip(clip, T.ColorJitter(brightness=0.2, contrast=0.2)))]
+        elif augment_level == 2: # 中度
+            aug_list = [Lambda(lambda clip: apply_pil_transform_to_clip(clip, T.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2)))]
+        elif augment_level == 3: # 强度
+            aug_list = [
+                Lambda(lambda clip: apply_pil_transform_to_clip(clip, T.Compose([
+                    T.RandomResizedCrop(size=112, scale=(0.6, 1.0)),
+                    T.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5),
+                ]))),
+            ]
+        else:
+            raise ValueError(f"错误: 未知的 augment_level '{augment_level}'。")
+        # if augment_level == 1:
+        #     aug_list = [
+        #         Lambda(lambda clip: apply_frame_level_transform(clip, T.ColorJitter(brightness=0.2, contrast=0.2)))]
+        # elif augment_level == 2:
+        #     aug_list = [
+        #         Lambda(lambda clip: apply_frame_level_transform(clip, T.ColorJitter(brightness=0.4, contrast=0.4))),
+        #         Lambda(
+        #             lambda clip: apply_frame_level_transform(clip, T.RandomAffine(degrees=15, translate=(0.1, 0.1)))),
+        #     ]
+        # elif augment_level == 3:
+        #     aug_list = [
+        #         Lambda(lambda clip: apply_frame_level_transform(clip, T.Compose([
+        #             T.ToPILImage(),
+        #             T.RandomResizedCrop(size=112, scale=(0.6, 1.0)),
+        #             T.ColorJitter(brightness=0.5, contrast=0.5),
+        #             T.ToTensor()
+        #         ]))),
+        #     ]
+        # else:
+        #     raise ValueError(f"错误: 未知的 augment_level '{augment_level}'。")
+
+        final_aug_list = [
+                             Lambda(lambda clip: resize_short_side(clip, size=128)),
+                             Lambda(lambda clip: crop_clip(clip, 112, 'random')),
+                         ] + aug_list + [
+                             Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+                             Lambda(flip_channels_rgb_to_bgr),
+                             Lambda(lambda x: x.permute(1, 0, 2, 3)),
+                             Lambda(lambda clip: (clip - mean) / std)
+                         ]
+        augment_transform = Compose(final_aug_list)
+    else:
+        augment_transform = None
     DatasetClass, train_ann_file, val_ann_file = dataset_map[dataset_name.lower()]
 
     train_list = os.path.join(data_path, split_dir, train_ann_file)
     val_list = os.path.join(data_path, split_dir, val_ann_file)
     video_dir = os.path.join(data_path, video_dirname)
 
-    mean = torch.tensor([104.0, 117.0, 128.0]).view(3, 1, 1, 1)
+    # mean = torch.tensor([104.0, 117.0, 128.0]).view(3, 1, 1, 1)
+    mean = torch.tensor([124.0, 117.0, 104.0]).view(3, 1, 1, 1)  # 注意顺序是 R, G, B
     std = torch.tensor([1.0, 1.0, 1.0]).view(3, 1, 1, 1)
 
     train_transform = Compose([
@@ -108,34 +180,15 @@ def get_data(
         Lambda(lambda clip: (clip - mean) / std),
     ])
 
-    if dataset_name == 'ucf':
-        print("Using MMAction2 official data pipeline for UCF101.")
-        # MMAction2's train_pipeline for C3D on UCF101
-        train_transform = Compose([
-            Lambda(lambda clip: resize_short_side(clip, size=128)),
-            Lambda(lambda clip: crop_clip(clip, 112, 'random')),
-            Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
-            # MMAction2 C3D config doesn't flip channels, assuming model handles it or was trained on RGB
-            # If accuracy is low, uncommenting the BGR flip is the first thing to test.
-            # Lambda(flip_channels_rgb_to_bgr),
-            Lambda(lambda x: x.permute(1, 0, 2, 3)), # To NCTHW format
-            Lambda(lambda clip: (clip - mean) / std) # C3D-style normalization
-        ])
 
-        # MMAction2's val_pipeline for C3D on UCF101
-        val_transform = Compose([
-            Lambda(lambda clip: resize_short_side(clip, size=128)),
-            Lambda(lambda clip: crop_clip(clip, 112, 'center')),
-            # Lambda(flip_channels_rgb_to_bgr),
-            Lambda(lambda x: x.permute(1, 0, 2, 3)), # To NCTHW format
-            Lambda(lambda clip: (clip - mean) / std)
-        ])
+
 
     train_full_dataset = DatasetClass(train_list, video_dir,
                                       transform=train_transform,
+                                      eval_transform=val_transform,
+                                      augment_transform=augment_transform,
                                       clip_len=clip_len,
                                       is_train_set=True,
-                                      eval_transform=val_transform,
                                       initial_labeled_ratio=initial_labeled_ratio)
 
     val_set = DatasetClass(val_list, video_dir,

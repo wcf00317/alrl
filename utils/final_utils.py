@@ -30,10 +30,10 @@ def create_and_load_optimizers(net, opt_choice, lr, wd,
     #    让分类头的学习率是主学习率的10倍，这是一个常见的起点
     params_group = [
         {'params': backbone_params, 'lr': lr},
-        {'params': cls_head_params, 'lr': lr * 10}
+        {'params': cls_head_params, 'lr': lr }#* 10
     ]
 
-    print(f"Optimizer setup: Backbone LR = {lr}, Classifier Head LR = {lr * 10}")
+    print(f"Optimizer setup: Backbone LR = {lr}, Classifier Head LR = {lr }")#* 10
 
     opt_kwargs = {
         "weight_decay": wd,

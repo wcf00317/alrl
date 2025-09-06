@@ -62,6 +62,12 @@ class UnifiedFeatureExtractor:
             self.active_features.append('temporal_consistency')
             self.feature_dim += 2 # 均值和标准差
             print("  - Temporal Consistency Feature: ENABLED")
+
+        if getattr(args, 'use_cross_view_consistency_feature', False):
+            self.active_features.append('cross_view_consistency')
+            # 同样可以提取均值和标准差，使其特征维度与其他策略保持一致
+            self.feature_dim += 2
+            print("  - Cross-View Consistency Feature: ENABLED")
         # --- NEW: 结束 ---
 
         if not self.active_features:
@@ -70,7 +76,7 @@ class UnifiedFeatureExtractor:
         print(f"Total feature dimension: {self.feature_dim}")
         print("------------------------------------------\n")
 
-    def extract(self, batch_video_indices, model, train_set, all_unlabeled_embeddings=None, all_labeled_embeddings=None):
+    def extract_emb(self, batch_video_indices, model, train_set, all_unlabeled_embeddings=None, all_labeled_embeddings=None, precomputed_data=None):
         if not batch_video_indices:
             return torch.zeros(self.feature_dim)
 
@@ -164,26 +170,128 @@ class UnifiedFeatureExtractor:
             mean_inconsistency = inconsistency_scores.mean().item()
             std_inconsistency = inconsistency_scores.std().item() if len(inconsistency_scores) > 1 else 0.0
             feature_tensors.append(torch.tensor([mean_inconsistency, std_inconsistency]))
+
+        if 'cross_view_consistency' in self.active_features:
+            if precomputed_data is None or 'view2_embeds' not in precomputed_data:
+                raise ValueError("Cross-view consistency需要预计算的'view2_embeds'，但未提供。")
+
+            # 找到当前批次在整个未标注池中的位置索引
+            unlabeled_indices = train_set.get_candidates_video_ids()
+            pos_indices = [unlabeled_indices.index(vid) for vid in batch_video_indices]
+
+            batch_view1_embeds = precomputed_data['embeddings'][pos_indices]
+            batch_view2_embeds = precomputed_data['view2_embeds'][pos_indices]
+
+            inconsistency_scores = 1.0 - F.cosine_similarity(batch_view1_embeds, batch_view2_embeds, dim=1)
+            mean_inconsistency = inconsistency_scores.mean().item()
+            std_inconsistency = inconsistency_scores.std().item() if len(inconsistency_scores) > 1 else 0.0
+            feature_tensors.append(torch.tensor([mean_inconsistency, std_inconsistency]))
         return torch.cat(feature_tensors)
 
-    # --- MODIFIED: 重命名函数并返回 probs ---
-    def get_embeddings_and_probs(self, video_indices, model, train_set):
+    def extract(self, batch_video_indices, model, train_set, batch_scores=None):
+        """
+        为一个批次的视频提取最终的特征向量。
+        它现在接收一个包含该批次所有预计算分数的字典。
+        """
+        if not batch_video_indices:
+            return torch.zeros(self.feature_dim)
+
+        feature_tensors = []
+
+        # --- 提取当前批次的基础信息 ---
+        batch_embeddings, batch_probs = self.get_embeddings_and_probs(batch_video_indices, model, train_set)
+
+        # --- 从传入的 batch_scores 字典中获取并聚合特征 ---
+        if 'statistical' in self.active_features:
+            entropies = -torch.sum(batch_probs * torch.log(batch_probs + 1e-8), dim=1)
+            similarities = torch.tensor([0.5] * len(batch_video_indices))  # 简化版
+            feature_tensors.append(torch.tensor([
+                entropies.mean().item(), entropies.std().item() if len(entropies) > 1 else 0.0,
+                similarities.mean().item(), similarities.std().item() if len(similarities) > 1 else 0.0,
+            ]))
+
+        # 所有其他策略都直接从 batch_scores 中获取结果
+        if 'diversity' in self.active_features:
+            # 多样性是批次内计算的，不依赖外部 precomputed_data
+            diversity_score = 0.0
+            if len(batch_video_indices) > 1:
+                normed_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
+                cosine_sim_matrix = torch.matmul(normed_embeddings, normed_embeddings.t())
+                upper_tri_indices = torch.triu_indices(len(batch_video_indices), len(batch_video_indices), offset=1)
+                diversity_score = 1.0 - cosine_sim_matrix[upper_tri_indices[0], upper_tri_indices[1]].mean().item()
+            feature_tensors.append(torch.tensor([diversity_score]))
+
+        # 对于需要预计算的特征，我们直接从传入的scores字典聚合
+        aggregation_map = {
+            'representativeness': 'representativeness',
+            'prediction_margin': 'prediction_margin',
+            'labeled_distance': 'labeled_distance',
+            'neighborhood_density': 'neighborhood_density',
+            'temporal_consistency': 'temporal_consistency',
+            'cross_view_consistency': 'cross_view_consistency'
+        }
+
+        for feature_name, score_key in aggregation_map.items():
+            if feature_name in self.active_features:
+                if batch_scores is None or score_key not in batch_scores:
+                    raise ValueError(f"特征 '{feature_name}' 已启用，但未在 batch_scores 中提供其分数。")
+
+                scores_tensor = batch_scores[score_key]
+                mean_score = scores_tensor.mean().item()
+                std_score = scores_tensor.std().item() if len(scores_tensor) > 1 else 0.0
+
+                # 特殊处理：margin分数需要转换
+                if feature_name == 'prediction_margin':
+                    feature_tensors.append(torch.tensor([1.0 - mean_score, std_score]))
+                else:
+                    feature_tensors.append(torch.tensor([mean_score, std_score]))
+
+        return torch.cat(feature_tensors)
+
+    def get_embeddings_and_probs(self, video_indices, model, train_set, video_tensors=None):
         model.eval()
         batch_embeddings = []
-        batch_probs = []  # --- MODIFIED ---
+        batch_probs = []
 
         with torch.no_grad():
-            for vid_idx in video_indices:
-                video_tensor = train_set.get_video(vid_idx).cuda()
-                video_tensor = video_tensor.unsqueeze(0).cuda()
+            # 如果没有提供预加载的tensors，则像原来一样从train_set加载
+            if video_tensors is None:
+                video_tensors = [train_set.get_video(vid_idx) for vid_idx in video_indices]
+
+            # 统一处理张量列表
+            for video_tensor in video_tensors:
+                # 确保输入有batch维度并移动到GPU
+                if video_tensor.dim() == 5:
+                    video_tensor = video_tensor.unsqueeze(0)
+                video_tensor = video_tensor.cuda()
+                # print(video_tensor.shape)
                 features = model.extract_feat(video_tensor)[0]
                 if features.shape[0] > 1: features = features.mean(dim=0, keepdim=True)
                 batch_embeddings.append(features)
+
                 logits = model.cls_head(features)
                 probs = F.softmax(logits, dim=1)
-                batch_probs.append(probs)  # --- MODIFIED: 存储 probs 而不是 entropy ---
+                batch_probs.append(probs)
 
         return torch.cat(batch_embeddings, dim=0), torch.cat(batch_probs, dim=0)
+    # --- MODIFIED: 重命名函数并返回 probs ---
+    # def get_embeddings_and_probs(self, video_indices, model, train_set):
+    #     model.eval()
+    #     batch_embeddings = []
+    #     batch_probs = []  # --- MODIFIED ---
+    #
+    #     with torch.no_grad():
+    #         for vid_idx in video_indices:
+    #             video_tensor = train_set.get_video(vid_idx).cuda()
+    #             video_tensor = video_tensor.unsqueeze(0).cuda()
+    #             features = model.extract_feat(video_tensor)[0]
+    #             if features.shape[0] > 1: features = features.mean(dim=0, keepdim=True)
+    #             batch_embeddings.append(features)
+    #             logits = model.cls_head(features)
+    #             probs = F.softmax(logits, dim=1)
+    #             batch_probs.append(probs)  # --- MODIFIED: 存储 probs 而不是 entropy ---
+    #
+    #     return torch.cat(batch_embeddings, dim=0), torch.cat(batch_probs, dim=0)
 
 
 def get_all_unlabeled_embeddings(args, model, train_set):

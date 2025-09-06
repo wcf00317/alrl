@@ -33,7 +33,7 @@ weight_decay: 0.0005  # 权重衰减
 momentum: 0.9  # 动量
 gamma: 0.95  # 学习率调度器的gamma值
 gamma_scheduler_dqn: 0.99  # DQN学习率调度器的gamma值
-epoch_num: 100  # 训练的总epoch数
+epoch_num: 45  # 训练的总epoch数
 patience: 30  # 早停的耐心值
 workers: 8
 # Active Learning 参数

@@ -97,10 +97,12 @@ def main():
                               use_policy=False)
     net.cuda()
 
+    aug_level = args.augment_level if getattr(args, 'use_cross_view_consistency_feature', False) else None
+
     _, train_set, _, _ = get_data(
         data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
         dataset_name=args.dataset, n_workers=args.workers, clip_len=args.clip_len,
-        initial_labeled_ratio=args.initial_labeled_ratio
+        augment_level=aug_level,initial_labeled_ratio=args.initial_labeled_ratio
     )
 
     alrm_preference_data = []
@@ -209,7 +211,7 @@ def main():
     _, train_set_rl, val_loader, _ = get_data(
         data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
         dataset_name=args.dataset, n_workers=args.workers, clip_len=args.clip_len,
-        initial_labeled_ratio=args.initial_labeled_ratio
+        augment_level=aug_level,initial_labeled_ratio=args.initial_labeled_ratio
     )
 
     criterion = nn.CrossEntropyLoss().cuda()

@@ -18,7 +18,7 @@ class ActiveLearningVideoDataset(Dataset):
     子类需要实现 _load_annotations 方法来加载特定数据集的标注。
     """
 
-    def __init__(self, annotation_file, video_dir, transform=None, eval_transform=None,
+    def __init__(self, annotation_file, video_dir, transform=None, eval_transform=None,augment_transform=None,
                  clip_len=16, sample_type='center_clip',
                  is_train_set=True, initial_labeled_ratio=0.01):
         self.video_dir = video_dir
@@ -26,6 +26,7 @@ class ActiveLearningVideoDataset(Dataset):
         self.video_list_info = self._load_annotations(annotation_file)
         self.transform = transform
         self.eval_transform = eval_transform if eval_transform is not None else transform
+        self.augment_transform = augment_transform if augment_transform is not None else transform
         self.clip_len = clip_len
         self.num_clips = 1
         self.sample_type = sample_type
@@ -184,3 +185,34 @@ class ActiveLearningVideoDataset(Dataset):
             clips.append(transformed_clip)
 
         return clips[0], clips[1]  # 返回 (fast_clip, slow_clip)
+
+    def get_video_augmented_views(self, vid_idx):
+        """
+        为同一个视频，返回两个不同空间增强的视角。
+        视角1: 使用标准的评估/验证 transform (通常是中心裁剪)。
+        视角2: 使用更强的训练/增强 transform。
+        """
+        video_name, _, _ = self.video_list_info[vid_idx]
+        full_path = os.path.join(self.video_dir, video_name)
+        video_reader = decord.VideoReader(full_path, ctx=decord.cpu(0))
+        total_frames = len(video_reader)
+
+        # --- 统一的采样逻辑 ---
+        start_frame = (total_frames - self.clip_len) // 2
+        indices = np.arange(start_frame, start_frame + self.clip_len)
+        if total_frames < self.clip_len:
+            indices = np.linspace(0, total_frames - 1, self.clip_len, dtype=int)
+
+        # raw_clip in shape (T, H, W, C)
+        raw_clip_numpy = video_reader.get_batch(indices).asnumpy()
+        # To (T, C, H, W)
+        raw_clip_tensor = torch.from_numpy(raw_clip_numpy).permute(0, 3, 1, 2).float()
+
+        # --- 生成两个视角 ---
+        # 视角1: 标准视角 (使用 eval_transform)
+        view1 = self.eval_transform(raw_clip_tensor.clone())
+
+        # 视角2: 强增强视角 (使用 augment_transform)
+        view2 = self.augment_transform(raw_clip_tensor.clone())
+
+        return view1, view2.unsqueeze(0)

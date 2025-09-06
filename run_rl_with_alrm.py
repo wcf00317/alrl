@@ -50,20 +50,24 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
         for inputs, labels, idx in train_pbar:
             i += 1
             inputs, labels = inputs.cuda(), labels.cuda()
+            #print("Inputs shape before model:", inputs.shape)
             batch_size = inputs.shape[0]
             num_clips = inputs.shape[1]
+
             optimizer.zero_grad()
+
             outputs = net(inputs, return_loss=False)
             outputs = net.cls_head(outputs)
-            labels_repeated = labels.repeat_interleave(num_clips)
-            loss = criterion(outputs, labels_repeated)
+
+            loss = criterion(outputs, labels)
+
             loss.backward()
-            # torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=40.0)
             optimizer.step()
 
             total_loss += loss.item() * inputs.size(0)
             preds = outputs.argmax(dim=1)
-            correct += (preds == labels_repeated).sum().item()
+            correct += (preds == labels).sum().item()
             total += batch_size * num_clips
             current_loss = total_loss / (train_pbar.n + 1) / batch_size
             current_acc = correct / total if total > 0 else 0
