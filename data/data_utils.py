@@ -65,6 +65,7 @@ def get_data(
         tr_bs,
         vl_bs,
         dataset_name,  # <-- 关键：直接从 config 传入
+        model_type='c3d', # <--- 新增model_type参数
         n_workers=4,
         clip_len=16,
         augment_level=None,
@@ -159,29 +160,49 @@ def get_data(
     val_list = os.path.join(data_path, split_dir, val_ann_file)
     video_dir = os.path.join(data_path, video_dirname)
 
+    if model_type == 'timesformer':
+        # Timesformer 使用更标准的ImageNet均值/标准差
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1, 1) * 255.0
+        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1, 1) * 255.0
+
+        train_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=224)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'random')),
+            Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),  # TCHW -> CTHW
+            Lambda(lambda clip: (clip - mean) / std)
+        ])
+
+        val_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=224)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'center')),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),
+            Lambda(lambda clip: (clip - mean) / std),
+        ])
+    elif model_type == 'c3d':
     # mean = torch.tensor([104.0, 117.0, 128.0]).view(3, 1, 1, 1)
-    mean = torch.tensor([124.0, 117.0, 104.0]).view(3, 1, 1, 1)  # 注意顺序是 R, G, B
-    std = torch.tensor([1.0, 1.0, 1.0]).view(3, 1, 1, 1)
+        mean = torch.tensor([124.0, 117.0, 104.0]).view(3, 1, 1, 1)  # 注意顺序是 R, G, B
+        std = torch.tensor([1.0, 1.0, 1.0]).view(3, 1, 1, 1)
 
-    train_transform = Compose([
-        Lambda(lambda clip: resize_short_side(clip, size=128)),
-        Lambda(lambda clip: crop_clip(clip, 112, 'random')),
-        Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
-        Lambda(flip_channels_rgb_to_bgr),
-        Lambda(lambda x: x.permute(1, 0, 2, 3)),
-        Lambda(lambda clip: (clip - mean) / std)
-    ])
+        train_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=128)),
+            Lambda(lambda clip: crop_clip(clip, 112, 'random')),
+            Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+            Lambda(flip_channels_rgb_to_bgr),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),
+            Lambda(lambda clip: (clip - mean) / std)
+        ])
 
-    val_transform = Compose([
-        Lambda(lambda clip: resize_short_side(clip, size=128)),
-        Lambda(lambda clip: crop_clip(clip, 112, 'center')),
-        Lambda(flip_channels_rgb_to_bgr),
-        Lambda(lambda x: x.permute(1, 0, 2, 3)),
-        Lambda(lambda clip: (clip - mean) / std),
-    ])
-
-
-
+        val_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=128)),
+            Lambda(lambda clip: crop_clip(clip, 112, 'center')),
+            Lambda(flip_channels_rgb_to_bgr),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),
+            Lambda(lambda clip: (clip - mean) / std),
+        ])
+    else:
+        # 如果不是支持的模型，则明确报错
+        raise ValueError(f"不支持的模型类型 '{model_type}'。请在 data_utils.py 中为其添加数据处理流程。")
 
     train_full_dataset = DatasetClass(train_list, video_dir,
                                       transform=train_transform,

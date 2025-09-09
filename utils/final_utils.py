@@ -51,14 +51,25 @@ def create_and_load_optimizers(net, opt_choice, lr, wd,
     }
 
     if policy_net is not None:
-        if opt_choice == 'SGD':
+        # 同样检查 opt_choice 的类型，提取出真正的优化器类型字符串
+        if isinstance(opt_choice, dict):
+            optimizer_type = opt_choice.get('type', 'SGD')
+        else:
+            optimizer_type = opt_choice
+
+        # 使用提取出的 optimizer_type 字符串进行判断
+        if optimizer_type == 'SGD':
             optimizerP = optim.SGD(
                 params=filter(lambda p: p.requires_grad, policy_net.parameters()),
                 **opt_kwargs_rl)
-        elif opt_choice == 'RMSprop':
+        elif optimizer_type == 'RMSprop':
             optimizerP = optim.RMSprop(
                 params=filter(lambda p: p.requires_grad, policy_net.parameters()),
                 lr=lr_dqn)
+
+        # 增加一个报错，防止未来使用不支持的优化器类型
+        if optimizerP is None:
+            raise ValueError(f"不支持为策略网络创建类型为 '{optimizer_type}' 的优化器。")
 
     name = exp_name_toload if load_opt and len(exp_name_toload) > 0 else exp_name
     opt_path = os.path.join(ckpt_path, name, 'opt_' + str(snapshot))

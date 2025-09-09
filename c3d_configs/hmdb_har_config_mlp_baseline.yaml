@@ -1,0 +1,94 @@
+# 文件名: wcf00317/alrl/alrl-reward_model/c3d_configs/hmdb_har_config_mlp_baseline.yaml
+
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+# --- 修改：为MLP baseline设置一个清晰的实验名 ---
+exp_name: hmdb_alrm_mlp_baseline_exp
+al_algorithm: dqn
+# --- 新增：指定使用MLP作为奖励模型 ---
+reward_model_type: mlp
+
+# 数据处理
+input_size: 112
+scale_size: 128
+train_batch_size: 32
+val_batch_size: 8
+num_each_iter: 5
+
+# 路径加载控制
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null
+snapshot: 0
+checkpointer: 1
+test: false
+final_test: false
+only_last_labeled: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.0001
+lr_dqn: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+gamma_scheduler_dqn: 0.99
+epoch_num: 30
+patience: 10
+workers: 8
+al_train_epochs: 15
+
+# Active Learning 参数
+initial_labeled_ratio: 0.05
+budget_labels: 578
+rl_pool: 10
+rl_episodes: 10
+rl_buffer: 100
+dqn_bs: 5
+dqn_gamma: 0.99
+
+# MMACTION2 配置
+mmaction_config: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth
+num_classes: 51
+embed_dim: 4096
+clip_len: 16
+num_clips: 1
+# --- 新增：特征提取器配置 (Feature Extractor Configuration) ---
+# 你可以像开关一样，把不用的特征设置为 false 或直接注释掉来做消融实验
+
+# (对应4个特征维度)
+# 含义: 计算批次内所有视频预测熵和简化版相似度的“均值”与“标准差”。
+# 这是最基础的特征，建议保持开启。
+use_statistical_features: false
+
+# (对应1个特征维度)
+# 含义: 批内多样性。计算批次内所有视频特征向量两两之间的平均余弦距离。
+#       值越高代表批次内的视频内容差异越大，带来的信息更多样。
+use_diversity_feature: false
+
+# (对应1个特征维度)
+# 含义: 代表性。计算批次中心与整个未标注池中心的相似度。
+#       值越高代表这个批次越能代表广大未标注数据。
+use_representativeness_feature: false
+
+# (对应2个特征维度)
+# 含义: 预测边际。计算模型最高和次高预测概率的差值。
+#       差值越小，代表模型越“纠结”，标注该样本价值可能越高。
+use_prediction_margin_feature: false
+
+# (对应2个特征维度)
+# 含义: 与已标注集的距离。计算候选批次与所有已标注样本的最小距离。
+#       距离越大，代表该批次包含的信息越“新颖”。
+use_labeled_distance_feature: false
+
+# (对应1个特征维度)
+# 含义: 邻域密度。衡量批次中的视频在特征空间中是否处于一个“拥挤”的区域。
+#       值越高代表其周围未标注样本越多，标注它的“性价比”可能越高。
+use_neighborhood_density_feature: false

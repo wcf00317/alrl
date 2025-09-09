@@ -107,14 +107,15 @@ def main():
     feature_extractor = UnifiedFeatureExtractor(args)
     net_stage1, _, _ = create_models(dataset=args.dataset, model_cfg_path=args.model_cfg_path,
                                      model_ckpt_path=args.model_ckpt_path, num_classes=args.num_classes,
-                                     use_policy=False)
+                                     use_policy=False,
+                                     embed_dim=args.embed_dim)
     net_stage1.cuda()
     aug_level = args.augment_level if getattr(args, 'use_cross_view_consistency_feature', False) else None
 
     _, train_set, _, _ = get_data(
         data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
         dataset_name=args.dataset, n_workers=args.workers, clip_len=args.clip_len,
-        augment_level=aug_level,initial_labeled_ratio=args.initial_labeled_ratio
+        augment_level=aug_level,initial_labeled_ratio=args.initial_labeled_ratio,model_type=args.model_type
     )
 
     alrm_preference_data = []
@@ -220,7 +221,7 @@ def main():
     _, train_set_rl, val_loader, _ = get_data(
         data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
         dataset_name=args.dataset, n_workers=args.workers, clip_len=args.clip_len,
-        augment_level=aug_level,initial_labeled_ratio=args.initial_labeled_ratio
+        augment_level=aug_level,initial_labeled_ratio=args.initial_labeled_ratio,model_type=args.model_type
     )
 
     criterion = nn.CrossEntropyLoss().cuda()

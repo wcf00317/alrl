@@ -1,0 +1,73 @@
+# timesformer_config/imagenet_ebm_hmdb51.yaml
+
+# ===================================================================
+#                       通用配置
+# ===================================================================
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: hmdb51_imagenet_ebm_timesformer_exp # 新的实验名
+seed: 42
+model_type: timesformer # <-- 关键：指定模型为Timesformer
+
+# --- 数据处理 & 模型配置 (来自Timesformer监督学习配置) ---
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 8
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/vit_base_patch16_224.pth
+num_classes: 51
+embed_dim: 768
+
+# ===================================================================
+#             阶段 1: 特征两端提取法
+# ===================================================================
+initial_labeled_ratio: 0.05
+budget_labels: 578
+num_each_iter: 20
+
+# --- 启用的特征策略 (请根据需要开启) ---
+use_statistical_features: true
+use_diversity_feature: true
+use_representativeness_feature: true
+use_prediction_margin_feature: true
+use_labeled_distance_feature: true
+use_neighborhood_density_feature: true
+use_temporal_consistency_feature: true
+use_cross_view_consistency_feature: false # 交叉视角需要额外的数据增强
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练
+# ===================================================================
+reward_model_type: ebm
+
+# ===================================================================
+#                       阶段 3: RL智能体训练
+# ===================================================================
+al_algorithm: dqn
+# --- 训练设置 (来自Timesformer监督学习配置) ---
+optimizer:
+  type: 'SGD'
+  lr: 0.0005
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+epoch_num: 30       # 最终收敛训练的总轮数
+patience: 10
+al_train_epochs: 15 # AL循环中，每次微调的Epoch数
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 30
+    by_epoch: True
+    milestones: [15, 25]
+    gamma: 0.1
+
+# --- DQN 智能体训练参数 (来自C3D EBM配置) ---
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_buffer: 100
+dqn_bs: 20
+dqn_gamma: 0.99

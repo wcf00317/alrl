@@ -1,0 +1,66 @@
+# 文件名: c3d_configs/hmdb_har_ebm.yaml
+
+# ===================================================================
+#                       通用配置 (对所有阶段生效)
+# ===================================================================
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: hmdb_ebm_workflow_exp # EBM实验的专属名称
+seed: 42
+
+# --- 数据处理 & 模型配置 (与您其他配置保持一致) ---
+train_batch_size: 32
+val_batch_size: 8
+workers: 8
+clip_len: 16
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth
+num_classes: 51
+embed_dim: 4096
+
+# ===================================================================
+#             阶段 1: 特征两端提取法 (参数与 run_feature_extremes.py 一致)
+# ===================================================================
+# --- AL预算和每轮选择的样本数 ---
+initial_labeled_ratio: 0.05
+budget_labels: 578
+num_each_iter: 10
+
+# --- 启用的特征策略 (这些将用于生成best/worst对) ---
+use_statistical_features: false
+use_diversity_feature: false
+use_representativeness_feature: false
+use_prediction_margin_feature: false
+use_labeled_distance_feature: false
+use_neighborhood_density_feature: false
+use_temporal_consistency_feature: false
+use_cross_view_consistency_feature: false
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练
+# ===================================================================
+# --- 关键：指定使用EBM作为奖励模型 ---
+reward_model_type: ebm
+# EBM的超参数 (可以留空使用默认值，或在此处指定)
+# ebm_interactions: 10
+# ebm_max_bins: 256
+
+# ===================================================================
+#                       阶段 3: RL智能体训练 (参数与 run_feature_extremes.py 一致)
+# ===================================================================
+al_algorithm: dqn
+optimizer: SGD
+lr: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+epoch_num: 30
+patience: 10
+al_train_epochs: 15
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_buffer: 100
+dqn_bs: 5
+dqn_gamma: 0.99

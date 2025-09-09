@@ -54,7 +54,8 @@ def main(args):
                               model_cfg_path=args.model_cfg_path,
                               model_ckpt_path=args.model_ckpt_path,
                               num_classes=args.num_classes,
-                              use_policy=False)
+                              use_policy=False,
+                              embed_dim=args.embed_dim)
 
     net.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
@@ -67,6 +68,7 @@ def main(args):
         tr_bs=args.train_batch_size,
         vl_bs=args.val_batch_size,
         dataset_name=args.dataset,  # <-- 关键：传入 dataset_name
+        model_type=args.model_type,
         n_workers=args.workers,
         clip_len=args.clip_len,
         initial_labeled_ratio=1.0  # 加载100%的训练数据

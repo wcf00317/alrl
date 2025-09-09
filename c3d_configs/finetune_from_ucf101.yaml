@@ -1,0 +1,32 @@
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: hmdb_full_data_finetune_from_ucf101 # 新的实验名
+train: true
+seed: 42
+
+# 数据处理
+train_batch_size: 32
+val_batch_size: 8
+workers: 8
+clip_len: 16
+
+# 训练设置
+optimizer: SGD
+lr: 0.0001 # 微调使用一个较小的学习率
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+epoch_num: 100 # 微调通常需要更少的轮数
+patience: 100
+
+# MMACTION2 配置
+model_type: c3d
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+# **关键：指向您下载的UCF101预训练模型**
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth
+#model_ckpt_path: "/data/chengfengwu/alrl/ralis/checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth"
+num_classes: 51
+embed_dim: 4096
+

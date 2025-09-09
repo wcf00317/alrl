@@ -76,7 +76,8 @@ def main():
                               model_cfg_path=args.model_cfg_path,
                               model_ckpt_path=args.model_ckpt_path,
                               num_classes=args.num_classes,
-                              use_policy=False)
+                              use_policy=False,
+                              embed_dim=args.embed_dim)
     net.cuda()
 
     train_loader, train_set, val_loader, _ = get_data(
@@ -86,7 +87,7 @@ def main():
         dataset_name=args.dataset,  # <-- 关键：传入 dataset_name
         n_workers=args.workers,
         clip_len=args.clip_len,
-        initial_labeled_ratio=args.initial_labeled_ratio # 加载100%的训练数据
+        initial_labeled_ratio=args.initial_labeled_ratio,model_type=args.model_type # 加载100%的训练数据
     )
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer_main = create_and_load_optimizers(net=net, opt_choice=args.optimizer, lr=args.lr, wd=args.weight_decay,

@@ -1,0 +1,46 @@
+# timesformer_configs/kinetics_finetune_ucf101_optimized.yaml
+
+# 基本信息
+dataset: ucf101
+data_path: ../ucf101
+ckpt_path: ./checkpoints
+exp_name: kinetics_finetune_ucf101_optimized # 使用新的实验名以作区分
+model_type: timesformer
+
+# 数据处理
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 8
+
+# 路径加载控制
+checkpointer: false
+test: false
+final_test: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.0001          # <-- 核心修改：大幅降低学习率以抑制过拟合
+  momentum: 0.9
+  weight_decay: 0.0005  # <-- 适当增加权重衰减，作为一种正则化手段
+  nesterov: True
+epoch_num: 30           # <-- 增加总训练轮数，给低学习率更多收敛时间
+patience: 15            # <-- 相应增加早停耐心
+
+# 学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 30 # 匹配新的 epoch_num
+    by_epoch: True
+    milestones: [15, 25]  # <-- 延后学习率衰减节点
+    gamma: 0.1
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb_20220815-78f05367.pth
+num_classes: 101
+embed_dim: 768

@@ -57,13 +57,13 @@ def main(args):
                               model_cfg_path=args.model_cfg_path,
                               model_ckpt_path=args.model_ckpt_path,
                               num_classes=args.num_classes,
-                              use_policy=False)
+                              use_policy=False,embed_dim=args.embed_dim)
     net.cuda()
     criterion = nn.CrossEntropyLoss().cuda()
 
     train_loader, train_set, val_loader, _ = get_data(
         data_path=args.data_path, tr_bs=args.train_batch_size, vl_bs=args.val_batch_size,
-        n_workers=args.workers, clip_len=args.clip_len,dataset_name=args.dataset#, transform_type='c3d'
+        n_workers=args.workers, clip_len=args.clip_len,model_type=args.model_type,dataset_name=args.dataset#, transform_type='c3d'
     )
 
     # --- 3. 设置日志 ---

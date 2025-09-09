@@ -1,0 +1,58 @@
+
+
+# 基本信息
+dataset: ucf101
+data_path: ../ucf101
+ckpt_path: ./checkpoints
+exp_name: imagenet_random_al_ucf101_exp # 清晰的实验名
+model_type: timesformer
+al_algorithm: random
+
+# 数据处理
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 8
+num_each_iter: 20      # <-- 已按要求修改：每轮选择20个样本
+
+# 路径加载控制
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null
+snapshot: 0
+checkpointer: true
+test: false
+final_test: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.0005
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+epoch_num: 30         # AL任务结束后，最终收敛训练的总轮数
+patience: 10
+al_train_epochs: 15   # AL循环中，每次微调的Epoch数
+
+# 学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 30 # 应与epoch_num匹配
+    by_epoch: True
+    milestones: [15, 25]
+    gamma: 0.1
+
+# Active Learning 参数
+initial_labeled_ratio: 0.05
+budget_labels: 950    # <-- 已按要求修改：总标注预算为950
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/vit_base_patch16_224.pth
+num_classes: 101
+embed_dim: 768

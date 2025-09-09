@@ -89,7 +89,7 @@ if __name__ == '__main__':
     args_parser = parser.get_arguments()
 
     # 2. Manually set the config file path. This makes the script dedicated to this test.
-    args_parser.config = './configs/ucf_har_config.yaml'
+    args_parser.config = './c3d_configs/ucf_har_config.yaml'
     print(f"Loading configuration from: {args_parser.config}")
 
     # 3. Load settings from the YAML file

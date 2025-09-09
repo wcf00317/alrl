@@ -50,12 +50,16 @@ def create_models(dataset, model_cfg_path, model_ckpt_path, num_classes,
         new_state_dict = {}
         for k, v in state_dict.items():
             # 检查是否是需要添加前缀的 backbone 权重
-            if not k.startswith('cls_head'):
+            if k.startswith('backbone.'):
+                new_state_dict[k] = v
+                # 为C3D等旧模型添加前缀
+            elif not k.startswith('cls_head'):
                 new_key = 'backbone.' + k
                 new_state_dict[new_key] = v
             else:
-                # 如果是 cls_head 的权重，则保持原样 (虽然本次加载中不需要)
                 new_state_dict[k] = v
+                # 如果是 cls_head 的权重，则保持原样 (虽然本次加载中不需要)
+
 
         # 使用 load_state_dict 加载修复后的权重，strict=False 允许 cls_head 不匹配
         model.load_state_dict(new_state_dict, strict=False)
