@@ -1,0 +1,42 @@
+# videomae_configs/finetune_hmdb51_base.yaml
+
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: videomaev2_base_finetune_hmdb51 # 实验名更新，强调base模型
+model_type: videomae
+
+# 数据处理
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 16
+
+# 训练设置 (为Base模型微调优化)
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.001
+  weight_decay: 0.05
+
+epoch_num: 100
+patience: 20
+
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 100
+    by_epoch: True
+    milestones: [40, 80]
+    gamma: 0.1
+
+# MMACTION2 配置
+# --- 关键: 使用与您提供的Kinetics配置匹配的 videomaev2-base 官方配置文件 ---
+model_cfg_path: ../mmaction2/configs/recognition/videomaev2/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400.py
+# --- 关键: 请在此处填入您下载的 vit-base 预训练权重路径 ---
+model_ckpt_path: "../pretrained_checkpoints/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400_20230510-3e7f93b2.pth"
+# --- 关键: 确保类别数和特征维度正确 ---
+num_classes: 51       # HMDB51的类别数
+embed_dim: 768        # VideoMAEv2-Base 模型的特征维度是 768

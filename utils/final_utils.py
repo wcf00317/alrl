@@ -53,9 +53,17 @@ def create_and_load_optimizers(net, opt_choice, lr, wd,
     if policy_net is not None:
         # 同样检查 opt_choice 的类型，提取出真正的优化器类型字符串
         if isinstance(opt_choice, dict):
-            optimizer_type = opt_choice.get('type', 'SGD')
+            try:
+                # 严格要求'type'键必须存在，否则报错
+                optimizer_type = opt_choice['type']
+            except KeyError:
+                # 抛出明确的错误信息
+                raise ValueError("错误: 当 'optimizer' 是一个字典时, 必须包含 'type' 键 (e.g., 'SGD', 'AdamW').")
+            opt_config = opt_choice
         else:
+            # 如果是字符串，直接赋值，并将配置字典设为空
             optimizer_type = opt_choice
+            opt_config = {}
 
         # 使用提取出的 optimizer_type 字符串进行判断
         if optimizer_type == 'SGD':

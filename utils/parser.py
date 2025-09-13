@@ -80,8 +80,8 @@ def get_arguments():
     parser.add_argument('--distance_threshold_alpha', type=float, default=0.9,
                         help='Scaling factor for the median distance threshold in pruning step (e.g., 0.9).')
     # MMACTION2 配置
-    parser.add_argument('--model_type', type=str, default='c3d', choices=['c3d', 'timesformer'],
-                        help='Specify the model architecture to use (e.g., c3d, timesformer).')
+    parser.add_argument('--model_type', type=str, default='c3d', choices=['c3d', 'timesformer', 'videomae'],
+                        help='Specify the model architecture to use (e.g., c3d, timesformer, videomae).')
     parser.add_argument('--mmaction_config', type=str, default=None)
     parser.add_argument('--model_cfg_path', type=str, default=None)
     parser.add_argument('--model_ckpt_path', type=str, default=None)

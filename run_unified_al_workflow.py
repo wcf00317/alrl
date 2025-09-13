@@ -235,7 +235,7 @@ def main():
         dataset_name=args.dataset,  # <-- 关键：传入 dataset_name
         n_workers=args.workers,
         clip_len=args.clip_len,
-        initial_labeled_ratio=args.initial_labeled_ratio  # 加载100%的训练数据
+        initial_labeled_ratio=args.initial_labeled_ratio ,model_type=args.model_type # 加载100%的训练数据
     )
     optimizer, optimizerP = create_and_load_optimizers(net=net, opt_choice=args.optimizer, lr=args.lr,
                                                        wd=args.weight_decay,

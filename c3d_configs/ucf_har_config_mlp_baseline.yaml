@@ -1,0 +1,76 @@
+# c3d_configs/ucf101_har_config_mlp_baseline.yaml
+
+# 基本信息
+# --- 修改: 数据集切换为 ucf101 ---
+dataset: ucf101
+data_path: ../ucf101
+ckpt_path: ./checkpoints
+# --- 修改: 设置一个清晰的 ucf101 实验名 ---
+exp_name: ucf101_alrm_mlp_baseline_exp
+al_algorithm: dqn
+# --- 新增：指定使用MLP作为奖励模型 ---
+reward_model_type: mlp
+
+# 数据处理
+input_size: 112
+scale_size: 128
+train_batch_size: 32
+val_batch_size: 8
+# --- 修改: 根据ucf101的常规配置调整每轮选择的样本数 ---
+num_each_iter: 20
+
+# 路径加载控制
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null
+snapshot: 0
+checkpointer: 1
+test: false
+final_test: false
+only_last_labeled: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.0001
+lr_dqn: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+gamma_scheduler_dqn: 0.99
+epoch_num: 30
+patience: 10
+workers: 8
+al_train_epochs: 15
+
+# Active Learning 参数
+# --- 修改: 根据ucf101的数据量调整总标注预算 ---
+initial_labeled_ratio: 0.05
+budget_labels: 950
+rl_pool: 10
+rl_episodes: 10
+rl_buffer: 100
+# --- 修改: DQN批大小通常与每轮选择数保持一致 ---
+dqn_bs: 20
+dqn_gamma: 0.99
+
+# MMACTION2 配置
+mmaction_config: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+# --- 关键修改: 将模型权重切换为Sports-1M预训练模型，以便在UCF101上进行公平的微调和主动学习 ---
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+# --- 关键修改: 类别数更新为UCF101的101类 ---
+num_classes: 101
+embed_dim: 4096
+clip_len: 16
+num_clips: 1
+# --- 特征提取器配置 (保持关闭状态，与您的HMDB基线一致) ---
+use_statistical_features: false
+use_diversity_feature: false
+use_representativeness_feature: false
+use_prediction_margin_feature: false
+use_labeled_distance_feature: false
+use_neighborhood_density_feature: false
+use_temporal_consistency_feature: false

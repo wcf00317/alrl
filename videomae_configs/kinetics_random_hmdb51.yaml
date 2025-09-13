@@ -1,0 +1,46 @@
+# videomae_configs/random_hmdb51_base.yaml
+
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: videomaev2_base_random_hmdb51_final # 实验名: 清晰标识
+model_type: videomae
+al_algorithm: random                         # <-- 关键: 指定为随机算法
+
+# 数据处理
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 16
+
+# 训练设置 (使用AdamW优化器, 20个收敛周期)
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.001
+  weight_decay: 0.05
+epoch_num: 20           # AL循环结束后，最终收敛训练的总轮数
+patience: 10
+al_train_epochs: 15     # 在每个AL循环中，用于微调的epoch数
+
+# 学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 20 # 匹配epoch_num
+    by_epoch: True
+    milestones: [10, 15]
+    gamma: 0.1
+
+# Active Learning 参数
+initial_labeled_ratio: 0.05
+budget_labels: 578
+num_each_iter: 5
+
+# MMACTION2 配置 (使用您提供的Base模型路径)
+model_cfg_path: ../mmaction2/configs/recognition/videomaev2/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400.py
+model_ckpt_path: "../pretrained_checkpoints/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400_20230510-3e7f93b2.pth"
+num_classes: 51
+embed_dim: 768        # VideoMAEv2-Base 模型的特征维度

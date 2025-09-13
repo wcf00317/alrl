@@ -179,6 +179,34 @@ def get_data(
             Lambda(lambda x: x.permute(1, 0, 2, 3)),
             Lambda(lambda clip: (clip - mean) / std),
         ])
+    elif model_type == 'videomae':
+        # VideoMAE 的数据处理流程
+        print("为 VideoMAE 模型配置数据转换流程 (参照官方配置文件)...")
+
+        # --- 核心修改：直接使用您提供的MMAction2官方配置中的均值和标准差 ---
+        # mean=[123.675, 116.28, 103.53]
+        # std=[58.395, 57.12, 57.375]
+        mean = torch.tensor([123.675, 116.28, 103.53]).view(3, 1, 1, 1)
+        std = torch.tensor([58.395, 57.12, 57.375]).view(3, 1, 1, 1)
+
+        # 训练时的数据增强流程
+        train_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=224)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'random')),
+            Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+            # 注意：VideoMAE 和 C3D 不同，它不需要 BGR 转换，保持 RGB 即可
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),  # TCHW -> CTHW
+            Lambda(lambda clip: (clip - mean) / std)
+        ])
+
+        # 验证/测试时的数据处理流程
+        val_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=224)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'center')),
+            # 同样，不需要 BGR 转换
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),  # TCHW -> CTHW
+            Lambda(lambda clip: (clip - mean) / std),
+        ])
     elif model_type == 'c3d':
     # mean = torch.tensor([104.0, 117.0, 128.0]).view(3, 1, 1, 1)
         mean = torch.tensor([124.0, 117.0, 104.0]).view(3, 1, 1, 1)  # 注意顺序是 R, G, B
