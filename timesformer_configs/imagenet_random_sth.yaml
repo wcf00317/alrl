@@ -1,0 +1,56 @@
+# timesformer_configs/imagenet_random_sth.yaml
+
+# ===================================================================
+#                       通用配置
+# ===================================================================
+# --- 基本信息 (来自 sthv2_supervised.yaml) ---
+dataset: sthv2
+data_path: ../sthv2
+ckpt_path: ./checkpoints
+exp_name: sthv2_random_finetune_timesformer # 实验名: Timesformer Random AL on STHV2
+model_type: timesformer
+seed: 42
+
+# --- 数据处理 & 模型配置 (来自 sthv2_supervised.yaml) ---
+train_batch_size: 30
+val_batch_size: 4
+workers: 8
+clip_len: 8
+# --- MMACTION2 配置 ---
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb_20220815-78f05367.pth
+# --- 关键修改：确保类别数和特征维度正确 ---
+num_classes: 20      # 注意：请根据你的STHV2子集的实际类别数修改此值
+embed_dim: 768       # Timesformer (base)的特征维度是 768
+
+# ===================================================================
+#             主动学习 (Active Learning) 配置
+# ===================================================================
+al_algorithm: random        # <-- 关键: 指定AL算法为随机采样
+
+initial_labeled_ratio: 0.05 # 初始标注比例：5%
+budget_labels: 2000           # 总标注预算：20个样本
+num_each_iter: 20           # 每轮迭代新标注的样本数
+# 注意: 由于总预算和每轮数量相等，主动学习只会运行一轮
+
+# ===================================================================
+#                       训练设置
+# ===================================================================
+optimizer:
+  type: 'SGD'
+  lr: 0.0005          # <-- 使用为Timesformer微调优化的学习率
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+
+epoch_num: 40         # 总训练周期
+patience: 12          # 早停耐心值
+al_train_epochs: 10   # 每次AL迭代后模型的再训练周期数
+
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 40           # 匹配 epoch_num
+    by_epoch: True
+    milestones: [15, 30]
+    gamma: 0.1

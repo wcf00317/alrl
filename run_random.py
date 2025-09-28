@@ -72,14 +72,13 @@ def main(args):
     baseline_logger.set_names(['Labeled_Count', 'Validation_Accuracy'])
 
     # --- 4. 【核心修正】初始训练阶段 ---
-    print("--- 开始初始训练阶段 (在最初的5%数据上) ---")
 
     # a. 创建初始训练集的 DataLoader
     initial_labeled_indices = list(train_set.labeled_video_ids)
     initial_train_subset = Subset(train_set, initial_labeled_indices)
     initial_train_loader = DataLoader(initial_train_subset, batch_size=args.train_batch_size, shuffle=True,
                                       num_workers=args.workers, drop_last=False)
-
+    print(f"--- 开始初始训练阶段 (默认初始是5%数据) 当前样本数: {len(initial_train_subset)}---")
     # b. 创建优化器和学习率调度器
     optimizer = create_and_load_optimizers(net=net, opt_choice=args.optimizer, lr=args.lr,
                                            wd=args.weight_decay, momentum=args.momentum, ckpt_path=args.ckpt_path,
@@ -126,7 +125,8 @@ def main(args):
         # 不需要重置模型权重
         _, val_acc = train_har_classifier(args, 0, current_train_loader, net,
                                           criterion, optimizer, val_loader, best_record,
-                                          logger=None, scheduler=scheduler, schedulerP=None, final_train=True)
+                                          logger=None, scheduler=scheduler, schedulerP=None,
+                                          final_train=True,epochs_to_run=args.al_train_epochs)
 
         num_labeled_after = train_set.get_num_labeled_videos()
         print(f"标注数量达到 {num_labeled_after} 后, 验证集准确率为: {val_acc:.4f}")

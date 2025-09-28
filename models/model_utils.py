@@ -56,8 +56,7 @@ def create_models(dataset, model_cfg_path, model_ckpt_path, num_classes,
             elif not k.startswith('cls_head'):
                 new_key = 'backbone.' + k
                 new_state_dict[new_key] = v
-            else:
-                new_state_dict[k] = v
+
                 # 如果是 cls_head 的权重，则保持原样 (虽然本次加载中不需要)
 
 

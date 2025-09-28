@@ -18,9 +18,9 @@ train: true
 seed: 42
 optimizer:
   type: 'SGD'
-  lr: 0.001
+  lr: 0.00005
   weight_decay: 0.05
-
+lr: 0.00005
 epoch_num: 100
 patience: 20
 

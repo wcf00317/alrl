@@ -37,12 +37,15 @@ cudnn.deterministic = True
 
 def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimizer,
                          val_loader, best_record, logger, scheduler, schedulerP,
-                         final_train=False):
+                         final_train=False,epochs_to_run=None):
     # (此函数保持不变)
     best_val_acc = best_record.get('top1_acc', 0.0)
     patience_counter = 0
-    for epoch in range(curr_epoch, args.epoch_num):
-        print(f'\nEpoch {epoch + 1}/{args.epoch_num}')
+    if epochs_to_run is None:
+        epochs_to_run = args.epoch_num
+
+    for epoch in range(curr_epoch, epochs_to_run):
+        print(f'\nEpoch {epoch + 1}/{epochs_to_run}')
         net.train()
         total_loss, correct, total = 0.0, 0, 0
         train_pbar = tqdm(train_loader, desc=f"Training  ", unit="batch")
@@ -53,7 +56,7 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
             #print("Inputs shape before model:", inputs.shape)
             batch_size = inputs.shape[0]
             num_clips = inputs.shape[1]
-
+            
             optimizer.zero_grad()
 
             outputs = net(inputs, return_loss=False)

@@ -1,31 +1,35 @@
-# videomae_configs/ebm_hmdb51_base.yaml
+# timesformer_configs/sth_har_ebm.yaml
 
 # ===================================================================
 #                       通用配置
 # ===================================================================
-dataset: hmdb51
-data_path: ../hmdb51
+# --- 基本信息 (来自 sthv2_supervised.yaml) ---
+dataset: sthv2
+data_path: ../sthv2
 ckpt_path: ./checkpoints
-exp_name: videomaev2_base_ebm_hmdb51 # 实验名
-model_type: videomae                 # <-- 关键: 指定模型为videomae
+exp_name: sthv2_ebm_finetune_timesformer # 实验名: 融合Timesformer, EBM和STHV2
+model_type: timesformer
 seed: 42
 
-# --- 数据处理 & 模型配置 ---
-train_batch_size: 8
+# --- 数据处理 & 模型配置 (来自 sthv2_supervised.yaml) ---
+train_batch_size: 30
 val_batch_size: 4
 workers: 8
-clip_len: 16
-model_cfg_path: ../mmaction2/configs/recognition/videomaev2/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400.py
-model_ckpt_path: "../pretrained_checkpoints/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400_20230510-3e7f93b2.pth"
-num_classes: 51
-embed_dim: 768
+clip_len: 8
+# --- MMACTION2 配置 ---
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb_20220815-78f05367.pth
+# --- 关键修改：确保类别数和特征维度正确 ---
+num_classes: 20      # 注意：请根据你的STHV2子集的实际类别数修改此值
+embed_dim: 768       # Timesformer (base)的特征维度是 768
 
 # ===================================================================
 #             阶段 1: 特征两端提取法
+# (参数参考 ucf_har_ebm.yaml 和 hmdb_har_ebm.yaml)
 # ===================================================================
 initial_labeled_ratio: 0.05
-budget_labels: 578
-num_each_iter: 20 # EBM方法通常每轮评估多个策略，可以适当减少num_each_iter
+budget_labels: 2000 # STHV2数据集较大，预算相应增加
+num_each_iter: 20
 
 # --- 启用的特征策略 (用于生成best/worst对) ---
 use_statistical_features: true
@@ -45,23 +49,27 @@ reward_model_type: ebm # <-- 关键: 指定使用EBM
 #                       阶段 3: RL智能体训练
 # ===================================================================
 al_algorithm: dqn
-# --- 训练设置 (使用AdamW优化器, 20个收敛周期) ---
+# --- 训练设置 (融合了finetune和AL的配置) ---
 optimizer:
   type: 'SGD'
-  lr: 0.00005
-  weight_decay: 0.05
-epoch_num: 100
-patience: 20
-al_train_epochs: 15
+  lr: 0.0005          # <-- 使用为Timesformer微调优化的学习率
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+
+epoch_num: 40        # AL流程使用更多的epochs
+patience: 15
+al_train_epochs: 10
+
 param_scheduler:
   - type: 'MultiStepLR'
     begin: 0
-    end: 100
+    end: 40
     by_epoch: True
-    milestones: [40, 80]
+    milestones: [15, 25] # 匹配新的epoch_num
     gamma: 0.1
 
-# --- DQN 智能体训练参数 ---
+# --- DQN 智能体训练参数 (参考 ucf_har_ebm.yaml) ---
 lr_dqn: 0.0001
 gamma_scheduler_dqn: 0.99
 rl_pool: 10

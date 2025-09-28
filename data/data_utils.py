@@ -9,6 +9,7 @@ from torchvision.transforms import functional as F_vision
 # --- 动态导入所有数据集类 ---
 from data.hmdb import HmdbDataset
 from data.ucf import UcfDataset
+from data.sth import Sthv2Dataset
 import numpy as np
 import random
 
@@ -80,6 +81,7 @@ def get_data(
     dataset_map = {
         'hmdb': (HmdbDataset, 'train_videos.txt', 'val_videos.txt'),
         'ucf': (UcfDataset, 'train_videos.txt', 'val_videos.txt'),
+        'sthv2': (Sthv2Dataset, 'sthv2_train_list_videos.txt', 'sthv2_val_list_videos.txt'),
         # 'ucf': (UcfDataset, 'train_videos.txt', 'val_videos.txt')
     }
 
@@ -88,6 +90,8 @@ def get_data(
         dataset_name = 'ucf'
     elif 'hmdb' in dataset_name:
         dataset_name = 'hmdb'
+    elif 'sthv2' in dataset_name:
+        dataset_name = 'sthv2'
     else:
         raise ValueError(f"Unknown dataset: '{dataset_name}'. Supported datasets are 'ucf' or 'hmdb'.")
 
@@ -214,8 +218,9 @@ def get_data(
 
         train_transform = Compose([
             Lambda(lambda clip: resize_short_side(clip, size=128)),
-            Lambda(lambda clip: crop_clip(clip, 112, 'random')),
-            Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+            Lambda(lambda clip: crop_clip(clip, 112, 'center')),
+            # Lambda(lambda clip: crop_clip(clip, 112, 'random')),
+            # Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
             Lambda(flip_channels_rgb_to_bgr),
             Lambda(lambda x: x.permute(1, 0, 2, 3)),
             Lambda(lambda clip: (clip - mean) / std)
