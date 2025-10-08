@@ -22,7 +22,10 @@ from utils.final_utils import check_mkdir, create_and_load_optimizers, get_logfi
 from utils.replay_buffer import ReplayMemory
 import utils.parser as parser
 from utils.final_utils import validate
-
+import pickle
+from copy import deepcopy
+from torch.utils.data import Subset, DataLoader
+from utils.reward_model import get_batch_features
 cudnn.benchmark = False
 cudnn.deterministic = True
 
@@ -143,6 +146,72 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
     return train_acc, best_val_acc  # 返回一个空的 best_record 字典
 
 
+def train_har_for_reward(net, train_loader, val_loader, optimizer, criterion, args):
+    """
+    一个简化的训练函数，仅运行几个epoch以获取用于计算奖励的验证分数。
+    这个函数是专门为主动学习的奖励计算而设计的，追求速度而非模型的完全收敛。
+    """
+    # ==================== 训练部分 ====================
+    net.train()
+    # args.al_train_epochs 是您在配置文件中设置的微调周期数 (例如 10 或 15)
+    for epoch in range(args.al_train_epochs):
+        # 我们只做训练，可以省略tqdm来减少日志输出
+        for inputs, labels, _ in train_loader:
+            # inputs: [N, num_clips, C, T, H, W], labels: [N]
+            inputs, labels = inputs.cuda(), labels.cuda()
+
+            batch_size = inputs.shape[0]
+            num_clips = inputs.shape[1]
+
+            optimizer.zero_grad()
+
+            # 模型会自动处理输入的reshape
+            outputs = net(inputs, return_loss=False)
+            outputs = net.cls_head(outputs)  # 获取分类头的输出
+
+            # 为多片段输入重复标签
+            labels_repeated = labels.repeat_interleave(num_clips)
+
+            loss = criterion(outputs, labels_repeated)
+            loss.backward()
+            optimizer.step()
+
+    # ==================== 验证部分 ====================
+    net.eval()
+    val_correct = 0
+    val_total = 0
+    with torch.no_grad():
+        for inputs, labels, _ in val_loader:
+            # inputs: [N, num_clips, C, T, H, W], labels: [N]
+            inputs, labels = inputs.cuda(), labels.cuda()
+
+            batch_size = inputs.shape[0]
+            num_clips = inputs.shape[1]
+
+            # 模型输出 outputs 的形状是 [N * num_clips, num_classes]
+            outputs = net(inputs, return_loss=False)
+            outputs = net.cls_head(outputs)
+
+            # 【验证策略】平均化输出
+            # 从 [N * num_clips, num_classes] -> [N, num_clips, num_classes]
+            outputs_reshaped = outputs.view(batch_size, num_clips, -1)
+            # 沿着 num_clips 维度求平均
+            final_outputs = outputs_reshaped.mean(dim=1)  # 最终形状变为 [N, num_classes]
+
+            # 使用平均化后的结果计算验证指标
+            preds = final_outputs.argmax(dim=1)
+            val_correct += (preds == labels).sum().item()
+            val_total += batch_size
+
+    # 确保 val_total 不为0，避免除零错误
+    if val_total == 0:
+        vl_acc = 0.0
+    else:
+        vl_acc = val_correct / val_total
+
+    # 返回 (训练集准确率, 验证集准确率)
+    # 因为我们只关心验证准确率作为奖励信号，所以训练准确率可以返回一个占位符 0.0
+    return 0.0, vl_acc
 def main(args):
     if getattr(args, 'config', None):
         print(f"加载配置文件: {args.config}")
@@ -249,338 +318,98 @@ def main(args):
 
     optimizer, optimizerP = create_and_load_optimizers(**kwargs_load_opt)
 
-    #####################################################################
-    ####################### TRAIN ######################
-    #####################################################################
+
     if args.train:
-        print('开始训练...')
-
-        # 创建学习率调度器
-        scheduler = ExponentialLR(optimizer, gamma=args.gamma)
-        schedulerP = ExponentialLR(optimizerP, gamma=args.gamma_scheduler_dqn)
-        # --- 整个过程是单次、连续的训练 ---
-        # HAR网络 (net) 是增量训练的，不应在每个Episode重置。
-        net.train()
-
-        # --- DQN 相关变量 ---
-        Transition = namedtuple('Transition',
-                                ('state_pool', 'state_subset', 'action', 'next_state_pool', 'next_state_subset',
-                                 'reward'))
-        memory = ReplayMemory(args.rl_buffer)
-        TARGET_UPDATE = 5  # 每5个RL步骤更新一次目标网络
-        steps_done = 0
-
-        # 加载策略网络和目标网络的初始状态
-        target_net.load_state_dict(policy_net.state_dict())
-        target_net.eval()
-
-        # 在任何主动学习开始前，获取初始的验证集准确率
-        # _, past_val_acc = validate(val_loader, net, criterion)
-        # print(f"初始验证集准确率: {past_val_acc:.4f}")
-        past_val_acc = 0
-        # 主循环现在迭代主动学习的“步骤”，直到满足标注预算
-        # "Episode"的概念现在更像是用于日志记录和保存的计数器
+        print('--- 开始数据收集模式 ---')
         # 计算总共需要进行多少次主动学习选择
+        # (总预算 - 初始已标注数) / 每轮选择数
         num_al_steps = (args.budget_labels - train_set.get_num_labeled_videos()) // args.num_each_iter
-        # print(args.budget_labels, train_set.get_num_labeled_videos(), args.num_each_iter)
+        print(f"总标注预算: {args.budget_labels}, 初始已标注: {train_set.get_num_labeled_videos()}, 每轮选择: {args.num_each_iter}个")
+        print(f"计划执行 {num_al_steps} 个数据收集回合。")
+        # --- 定义结束 ---
+        # --- 新增：初始化用于存储偏好数据的列表 ---
+        alrm_preference_data = []
+        alrm_data_path = os.path.join(args.ckpt_path, args.exp_name, 'alrm_preference_data.pkl')
+
+        # --- 奖励计算相关的微调模型，需要一个独立的优化器 ---
+        optimizer_for_reward = create_and_load_optimizers(**kwargs_load_opt)[0]
+
+        past_val_acc = 0.0
         for i in range(num_al_steps):
-            print(f'\n--------------- 主动学习步骤 {i + 1}/{num_al_steps} ---------------')
+            print(f'\n--------------- 数据收集回合 {i + 1}/{num_al_steps} ---------------')
 
-            # 1. 从所有未标注视频中获取候选池
-            num_videos_to_sample = args.num_each_iter * args.rl_pool
-            candidates_video_ids = train_set.get_candidates_video_ids()
-            video_candidates_for_state = get_video_candidates(candidates_video_ids, train_set,
-                                                              num_videos_to_sample=num_videos_to_sample)
-
-            # 2. 计算当前状态 (State)
-            labeled_video_ids_for_state = list(train_set.labeled_video_ids)
-
-            current_state, _ = compute_state_for_har(
-                args,
-                net,
-                train_set,  # 第3个参数：传入完整的数据集对象
-                video_candidates_for_state,  # 第4个参数：传入候选【视频ID列表】
-                labeled_video_indices=labeled_video_ids_for_state  # 第5个参数：传入已标注【视频ID列表】
+            # 1. 获取当前状态和候选池信息
+            # 注意： compute_state_for_har 现在需要返回熵值
+            current_state, candidate_indices, candidate_entropies = compute_state_for_har(
+                args, net, train_set, train_set.get_candidates_video_ids(), list(train_set.labeled_video_ids)
             )
+            entropy_map = {idx: entropy for idx, entropy in zip(candidate_indices, candidate_entropies)}
+            # 简化版相似度，后续可以替换为真实计算
+            similarity_map = {idx: 0.5 for idx in candidate_indices}
 
-            # labeled_video_ids_for_state = list(train_set.labeled_video_ids)
-            # current_state, _ = compute_state_for_har(args, net, video_candidates_for_state,
-            #                                  candidate_set,  # 这是 train_set 的一个别名
-            #                                  labeled_video_indices=labeled_video_ids_for_state,
-            #                                          train_set=train_set)
+            # 2. 生成两个候选批次：一个基于熵，一个随机
+            # 批次A：熵策略
+            original_algo = args.al_algorithm
+            args.al_algorithm = 'entropy'
+            action_indices_A, _, _ = select_action_for_har(args, policy_net, current_state, 0, test=True)
+            batch_A_indices = [candidate_indices[idx] for idx in action_indices_A.tolist()]
 
-            # 3. 选择动作 (Action)，即决定标注哪些视频
-            action, steps_done, _ = select_action_for_har(args, policy_net, current_state, steps_done)
-            actual_video_ids_to_label = [video_candidates_for_state[idx] for idx in action.tolist()]
+            # 批次B：随机策略
+            args.al_algorithm = 'random'
+            action_indices_B, _, _ = select_action_for_har(args, policy_net, current_state, 0, test=True)
+            batch_B_indices = [candidate_indices[idx] for idx in action_indices_B.tolist()]
+            args.al_algorithm = original_algo  # 恢复原设置
 
-            # 4. 将选中的视频加入到已标注集合中
-            add_labeled_videos(args, [], actual_video_ids_to_label, train_set,
-                               budget=args.budget_labels, n_ep=i)
+            # 3. 分别评估两个批次的真实奖励
+            print("评估批次 A (熵策略)...")
+            net_copy_A = deepcopy(net)  # 使用网络副本，避免互相影响
+            optimizer_A = torch.optim.SGD(net_copy_A.parameters(), lr=args.lr)  # 为副本创建独立优化器
+            temp_set_A = deepcopy(train_set)
+            add_labeled_videos(args, [], batch_A_indices, temp_set_A, budget=args.budget_labels, n_ep=i)
+            temp_loader_A = DataLoader(Subset(temp_set_A, list(temp_set_A.labeled_video_ids)),
+                                       batch_size=args.train_batch_size, shuffle=True, num_workers=args.workers)
+            _, acc_A = train_har_for_reward(net_copy_A, temp_loader_A, val_loader, optimizer_A, criterion, args)
+            true_reward_A = acc_A - past_val_acc
+            print(f"批次 A 奖励 (Acc_Gain): {true_reward_A:.4f}")
 
-            # 5. 使用更新后的已标注数据集，重建 DataLoader
-            current_labeled_indices = list(train_set.labeled_video_ids)
-            train_subset = Subset(train_set, current_labeled_indices)
-            train_loader = DataLoader(train_subset,
-                                      batch_size=args.train_batch_size,
-                                      shuffle=True,
-                                      num_workers=args.workers,
-                                      drop_last=False)
-            print(f"已重建 train_loader，包含 {len(current_labeled_indices)} 个已标注视频。")
+            print("评估批次 B (随机策略)...")
+            net_copy_B = deepcopy(net)
+            optimizer_B = torch.optim.SGD(net_copy_B.parameters(), lr=args.lr)
+            temp_set_B = deepcopy(train_set)
+            add_labeled_videos(args, [], batch_B_indices, temp_set_B, budget=args.budget_labels, n_ep=i)
+            temp_loader_B = DataLoader(Subset(temp_set_B, list(temp_set_B.labeled_video_ids)),
+                                       batch_size=args.train_batch_size, shuffle=True, num_workers=args.workers)
+            _, acc_B = train_har_for_reward(net_copy_B, temp_loader_B, val_loader, optimizer_B, criterion, args)
+            true_reward_B = acc_B - past_val_acc
+            print(f"批次 B 奖励 (Acc_Gain): {true_reward_B:.4f}")
 
-            # 6. 在新数据上训练HAR分类器，以获得奖励信号
-            print('使用新选择的视频训练HAR网络...')
-            temp_epoch_num = args.epoch_num
-            args.epoch_num = args.al_train_epochs  # 训练少量epoch (例如 5-10)，这是个需要您新增的参数
+            # 4. 记录偏好对
+            features_A = get_batch_features([entropy_map.get(idx, 0) for idx in batch_A_indices],
+                                            [similarity_map.get(idx, 0) for idx in batch_A_indices])
+            features_B = get_batch_features([entropy_map.get(idx, 0) for idx in batch_B_indices],
+                                            [similarity_map.get(idx, 0) for idx in batch_B_indices])
 
-            _, vl_acc = train_har_for_reward(net, train_loader, val_loader, optimizer, criterion, args)
-            args.epoch_num = temp_epoch_num
-
-            # 7. 计算奖励 (Reward)
-            reward = Variable(torch.Tensor([[(vl_acc - past_val_acc) * 100]])).view(-1).cuda()
-            print(f"验证集准确率从 {past_val_acc:.4f} 变为 {vl_acc:.4f}。奖励: {reward.item():.4f}")
-            past_val_acc = vl_acc
-
-            # 8. 计算下一个状态 (Next State)
-            next_state = None
-            if train_set.get_num_labeled_videos() < args.budget_labels:
-                next_candidates_video_ids = train_set.get_candidates_video_ids()
-                next_video_candidates_for_state = get_video_candidates(next_candidates_video_ids, train_set,
-                                                                       num_videos_to_sample=num_videos_to_sample)
-                next_labeled_video_ids = list(train_set.labeled_video_ids)
-                next_state, _ = compute_state_for_har(
-                    args,
-                    net,
-                    train_set,  # 第一个参数：完整的数据集对象
-                    next_video_candidates_for_state,  # 第二个参数：候选视频ID列表
-                    labeled_video_indices=next_labeled_video_ids  # 第三个参数：已标注视频ID列表
-                )
-            else:
-                print("标注预算已用尽。")
-
-            reward_per_action = reward / args.num_each_iter
-
-            print(f"Pushing {args.num_each_iter} transitions to replay memory...")
-            for j in range(args.num_each_iter):
-                # 获取第 j 个动作
-                single_action = action[j].view(1)  # 取出单个动作并确保其为1D张量
-
-                # 使用包含所有独立字段的 push 调用
-                if next_state is None:
-                    memory.push(current_state,
-                                single_action,
-                                None,
-                                reward_per_action)
+            if abs(true_reward_A - true_reward_B) > 0.001:  # 过滤噪声
+                if true_reward_A > true_reward_B:
+                    alrm_preference_data.append({'winner': features_A, 'loser': features_B})
                 else:
-                    memory.push(current_state,
-                                single_action,
-                                next_state,
-                                reward_per_action)
+                    alrm_preference_data.append({'winner': features_B, 'loser': features_A})
 
-            # 10. 优化策略网络 (DQN)
-            optimize_model_conv(args, memory, Transition, policy_net, target_net, optimizerP, GAMMA=args.dqn_gamma,
-                                BATCH_SIZE=args.dqn_bs,dqn_epochs=args.dqn_epochs)
+            # 5. 更新主状态
+            winner_batch = batch_A_indices if true_reward_A >= true_reward_B else batch_B_indices
+            add_labeled_videos(args, [], winner_batch, train_set, budget=args.budget_labels, n_ep=i)
+            main_loader = DataLoader(Subset(train_set, list(train_set.labeled_video_ids)), batch_size=args.train_batch_size,
+                                     shuffle=True, num_workers=args.workers)
+            _, past_val_acc = train_har_for_reward(net, main_loader, val_loader, optimizer, criterion, args)
+            print(f"主模型已更新, 当前基准准确率: {past_val_acc:.4f}")
 
-            # 11. 更新目标网络
-            if i % TARGET_UPDATE == 0:
-                print('更新目标网络...')
-                target_net.load_state_dict(policy_net.state_dict())
+            # 6. 定期保存数据
+            if i % 5 == 0 or i == num_al_steps - 1:
+                with open(alrm_data_path, 'wb') as f:
+                    pickle.dump(alrm_preference_data, f)
+                print(f"偏好数据已保存, 当前共 {len(alrm_preference_data)} 对。")
 
-        # --- 主动学习步骤结束 ---
-        print("\n预算已用尽。在所有已选数据上训练HAR模型至收敛...")
-        logger, best_record, curr_epoch = get_logfile(args.ckpt_path, args.exp_name, args.checkpointer,
-                                                      args.snapshot, log_name='final_convergence_log.txt')
-
-        # 重建最终的dataloader
-        final_labeled_indices = list(train_set.labeled_video_ids)
-        final_train_subset = Subset(train_set, final_labeled_indices)
-        final_train_loader = DataLoader(final_train_subset, batch_size=args.train_batch_size, shuffle=True,
-                                        num_workers=args.workers, drop_last=False)
-
-        # 在最终选出的数据集上训练到收敛
-        _, final_val_acc = train_har_classifier(args, 0, final_train_loader, net,
-                                                criterion, optimizer, val_loader,
-                                                best_record, logger, scheduler,
-                                                schedulerP, final_train=True)
-
-        print(f"收敛后的最终验证集准确率: {final_val_acc:.4f}")
-
-        # 保存最终的策略网络
-        torch.save({
-            'policy_net': policy_net.cpu().state_dict(),
-            'optimizerP': optimizerP.state_dict(),
-        }, os.path.join(args.ckpt_path, args.exp_name, 'policy_final.pth'))
-        policy_net.cuda()
-    #####################################################################
-    ################################ TEST ########################
-    #####################################################################
-    if args.test:
-        print('开始测试...')
-        # 测试时，策略网络是固定的，不需要优化器或学习率调度器
-        policy_net.eval()
-
-        # 但HAR模型仍然需要优化器和调度器来进行训练
-        scheduler = ExponentialLR(optimizer, gamma=args.gamma)
-
-        # 在测试评估时，HAR模型是从头开始训练的
-        net.train()
-
-        # 获取用于记录测试结果的日志文件
-        logger, best_record, _ = get_logfile(args.ckpt_path, args.exp_name, args.checkpointer,
-                                             args.snapshot, log_name='test_log.txt')
-
-        # 主测试循环，与训练循环类似，但没有RL更新
-        while train_set.get_num_labeled_videos() < args.budget_labels:
-            num_labeled = train_set.get_num_labeled_videos()
-            print(f'\n----- 测试步骤: 已标注视频数 {num_labeled}/{args.budget_labels} -----')
-
-            # 1. 获取候选池并计算状态
-            num_videos_to_sample = args.num_each_iter * args.rl_pool
-            candidates_video_ids = train_set.get_candidates_video_ids()
-            video_candidates_for_state = get_video_candidates(candidates_video_ids, train_set,
-                                                              num_videos_to_sample=num_videos_to_sample)
-            labeled_video_ids_for_state = list(train_set.labeled_video_ids)
-            # current_state, _ = compute_state_for_har(args, net, video_candidates_for_state,
-            #                                  candidate_set,
-            #                                  labeled_video_indices=labeled_video_ids_for_state)
-
-
-            current_state, _ = compute_state_for_har(
-                args,
-                net,
-                train_set,  # 第3个参数：传入完整的数据集对象
-                video_candidates_for_state,  # 第4个参数：传入候选【视频ID列表】
-                labeled_video_indices=labeled_video_ids_for_state  # 第5个参数：传入已标注【视频ID列表】
-            )
-
-            # 2. 从策略网络贪婪地选择动作 (test=True 禁用了探索)
-            action, _, _ = select_action_for_har(args, policy_net, current_state, 0, test=True)
-            actual_video_ids_to_label = [video_candidates_for_state[idx] for idx in action.tolist()]
-
-            # 3. 将新视频加入已标注集合
-            add_labeled_videos(args, [], actual_video_ids_to_label, train_set, budget=args.budget_labels, n_ep=0)
-
-            # 4. 重建 DataLoader
-            current_labeled_indices = list(train_set.labeled_video_ids)
-            train_subset = Subset(train_set, current_labeled_indices)
-            train_loader = DataLoader(train_subset,
-                                      batch_size=args.train_batch_size,
-                                      shuffle=True,
-                                      num_workers=args.workers,
-                                      drop_last=False)
-            print(f"已重建 train_loader，包含 {len(current_labeled_indices)} 个已标注视频。")
-
-            # 5. 训练HAR分类器并记录性能
-            # 测试时，我们在每一步都训练到收敛，以观察到目前为止所选数据的最佳性能。
-            print('使用当前所选视频训练HAR网络至收敛...')
-
-            # 为每一步的收敛训练重置 best_record
-            step_best_record = {'top1_acc': 0.0}
-            _, val_acc = train_har_classifier(args, 0, train_loader, net,
-                                              criterion, optimizer, val_loader,
-                                              step_best_record, logger, scheduler,
-                                              None,  # 没有策略网络的调度器
-                                              final_train=True)  # 训练到收敛
-
-            print(f"当前步骤的验证集准确率: {val_acc:.4f}")
-
-        print("测试结束。")
-        logger.close()
-
-
-def train_har_for_reward(net, train_loader, val_loader, optimizer, criterion, args):
-    """
-    一个简化的训练函数，仅运行几个epoch以获取用于计算奖励的验证分数。
-    【已修改以正确处理多片段采样】
-    """
-    # ==================== 训练部分 ====================
-    net.train()
-    # args.al_train_epochs 是一个您需要新增的参数, 例如设置为 5
-    for epoch in range(args.al_train_epochs):
-        for inputs, labels, _ in train_loader:
-            # inputs: [N, num_clips, C, T, H, W], labels: [N]
-            inputs, labels = inputs.cuda(), labels.cuda()
-
-            batch_size = inputs.shape[0]
-            num_clips = inputs.shape[1]
-
-            optimizer.zero_grad()
-
-            # 模型会自动处理输入的reshape，直接传入6D张量即可
-            # 模型输出 outputs 的形状是 [N * num_clips, num_classes]
-            outputs = net(inputs, return_loss=False)
-            outputs = net.cls_head(outputs)
-            # 【训练策略】重复标签
-            labels_repeated = labels.repeat_interleave(num_clips)
-
-            loss = criterion(outputs, labels_repeated)
-            loss.backward()
-            optimizer.step()
-
-    # ==================== 验证部分 ====================
-    net.eval()
-    val_correct, val_total = 0, 0
-    with torch.no_grad():
-        for inputs, labels, _ in val_loader:
-            # inputs: [N, num_clips, C, T, H, W], labels: [N]
-            inputs, labels = inputs.cuda(), labels.cuda()
-
-            batch_size = inputs.shape[0]
-            num_clips = inputs.shape[1]
-
-            # 模型输出 outputs 的形状是 [N * num_clips, num_classes]
-            outputs = net(inputs, return_loss=False)
-            outputs = net.cls_head(outputs)
-            # 【验证/测试策略】平均化输出
-            # 从 [N * num_clips, num_classes] -> [N, num_clips, num_classes]
-            outputs_reshaped = outputs.view(batch_size, num_clips, -1)
-            # 沿着 num_clips 维度求平均
-            final_outputs = outputs_reshaped.mean(dim=1)  # 最终形状变为 [N, num_classes]
-
-            # 使用平均化后的结果计算验证指标
-            preds = final_outputs.argmax(dim=1)
-            val_correct += (preds == labels).sum().item()
-            val_total += batch_size
-
-    # 确保 val_total 不为0，避免除零错误
-    if val_total == 0:
-        vl_acc = 0.0
-    else:
-        vl_acc = val_correct / val_total
-
-    # 返回 (训练集准确率, 验证集准确率)
-    # 因为我们只关心验证准确率，所以训练准确率可以返回一个占位符
-    return 0.0, vl_acc
-
-
-# def train_har_for_reward(net, train_loader, val_loader, optimizer, criterion, args):
-#     """一个简化的训练函数，仅运行几个epoch以获取用于计算奖励的验证分数。"""
-#     net.train()
-#     # args.al_train_epochs 是一个您需要新增的参数, 例如设置为 5
-#     for epoch in range(args.al_train_epochs):
-#         for inputs, labels, _ in train_loader:
-#             inputs, labels = inputs.cuda(), labels.cuda()
-#             optimizer.zero_grad()
-#             # inputs = inputs.unsqueeze(dim=1)
-#             outputs = net(inputs, return_loss=False)
-#             loss = criterion(outputs, labels)
-#             loss.backward()
-#             optimizer.step()
-#
-#     # 获取验证集准确率
-#     net.eval()
-#     val_correct, val_total = 0, 0
-#     with torch.no_grad():
-#         for inputs, labels, _ in val_loader:
-#             inputs, labels = inputs.cuda(), labels.cuda()
-#             # inputs = inputs.unsqueeze(dim=1)
-#             outputs = net(inputs, return_loss=False)
-#             preds = outputs.argmax(dim=1)
-#             val_correct += (preds == labels).sum().item()
-#             val_total += inputs.size(0)
-#
-#     # 返回 (训练集准确率, 验证集准确率)
-#     return 0.0, val_correct / val_total
-
+        print(f"--- 数据收集完成！请运行 train_alrm.py 来训练奖励模型。 ---")
 if __name__ == '__main__':
     ####------ Parse arguments from console  ------####
     args = parser.get_arguments()

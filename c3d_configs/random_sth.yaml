@@ -1,0 +1,45 @@
+# c3d_configs/random_sth.yaml
+
+# ===================================================================
+#                       通用配置
+# ===================================================================
+# --- 基本信息 (来自 c3d_finetune_from_sports1m) ---
+dataset: sthv2
+data_path: ../sthv2
+ckpt_path: ./checkpoints
+exp_name: c3d_random_sthv2 # 实验名: C3D Random AL on STHV2
+model_type: c3d            # <-- 关键: 指定模型为c3d
+seed: 42
+
+# --- 数据处理 & 模型配置 (来自 c3d_finetune_from_sports1m) ---
+train_batch_size: 30
+val_batch_size: 8
+workers: 16
+clip_len: 16
+# --- MMACTION2 配置 ---
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+# --- 关键修改：确保类别数正确 ---
+num_classes: 20 # 注意：请根据你的STHV2子集的实际类别数修改此值
+
+# ===================================================================
+#             主动学习 (Active Learning) 配置
+# ===================================================================
+al_algorithm: random       # <-- 关键: 指定AL算法为随机采样
+
+initial_labeled_ratio: 0.05 # 初始标注比例：5%
+budget_labels: 2000         # 总标注预算：2000个样本
+num_each_iter: 20           # 每轮迭代新标注的样本数
+
+# ===================================================================
+#                       训练设置
+# ===================================================================
+optimizer:
+  type: 'SGD'
+  lr: 0.00005        # <-- 使用为C3D微调优化的超小学习率
+  weight_decay: 0.0005
+  momentum: 0.9
+
+epoch_num: 5        # 总训练周期
+patience: 15         # 早停耐心值
+al_train_epochs: 15  # 每次AL迭代后模型的再训练周期数

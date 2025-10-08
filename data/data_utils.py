@@ -1,41 +1,42 @@
-import os, torch
-from torch.utils.data import DataLoader, Subset  # 导入 Subset
-import torchvision.transforms as standard_transforms
-from data.hmdb import HmdbDataset  # 确保路径正确
-from torchvision.transforms import Compose, Normalize, Lambda
+import os
+import torch
+from torch.utils.data import DataLoader, Subset
+from torchvision.transforms import Compose, Lambda
 import torch.nn.functional as F
 import torchvision.transforms as T
+from torchvision.transforms import functional as F_vision
 
+# --- 动态导入所有数据集类 ---
+from data.hmdb import HmdbDataset
+from data.ucf import UcfDataset
+from data.sth import Sthv2Dataset
+from data.kinetics import KineticsDataset
+import numpy as np
+import random
 
-def resize_and_crop(clip, scale_size=128, crop_size=112):
-    """对 [T, C, H, W] 的 clip 逐帧 Resize 和 CenterCrop"""
-    resized = F.interpolate(clip, size=(scale_size, scale_size), mode='bilinear', align_corners=False)
-    h, w = resized.shape[-2:]
-    th, tw = crop_size, crop_size
-    i = int(round((h - th) / 2.))
-    j = int(round((w - tw) / 2.))
-    return resized[:, :, i:i + th, j:j + tw]  # [T, C, H, W]
+def seed_worker(worker_id):
+    """
+    为 DataLoader 的 worker 设置随机种子，确保可复现性。
+    """
+    # torch.initial_seed() 返回一个由主进程为当前 worker 生成的唯一基础种子
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
-
-def apply_normalize_per_frame(normalize):
-    def _apply(clip):
-        if clip.shape[0] == 3:
-            # 如果是 [C, T, H, W]，转为 [T, C, H, W]
-            clip = clip.permute(1, 0, 2, 3)
-        return torch.stack([normalize(frame) for frame in clip])
-    return Lambda(_apply)
-
+# --- 辅助函数 ---
 def resize_short_side(clip, size, interpolation=T.InterpolationMode.BILINEAR):
-    """保持长宽比，将短边缩放到指定大小"""
+    # clip shape: (T, C, H, W)
     t, c, h, w = clip.shape
-    if h > w:
-        new_h, new_w = int(size * h / w), size
+    if w < h:
+        new_w = size
+        new_h = int(size * h / w)
     else:
-        new_h, new_w = size, int(size * w / h)
-    return torch.stack([T.functional.resize(frame, [new_h, new_w], interpolation=interpolation) for frame in clip])
+        new_h = size
+        new_w = int(size * w / h)
+    return torch.stack([F_vision.resize(frame, [new_h, new_w], interpolation=interpolation) for frame in clip])
+
 
 def crop_clip(clip, crop_size, crop_type='center'):
-    """对视频片段进行裁剪"""
     t, c, h, w = clip.shape
     th, tw = (crop_size, crop_size)
     if crop_type == 'center':
@@ -46,100 +47,229 @@ def crop_clip(clip, crop_size, crop_type='center'):
         j = torch.randint(0, w - tw + 1, size=(1,)).item()
     else:
         raise ValueError(f"Unknown crop_type: {crop_type}")
-    return clip[:, :, i:i+th, j:j+tw]
+    return clip[:, :, i:i + th, j:j + tw]
+
 
 def flip_clip(clip, flip_ratio=0.5):
-    """以一定概率对视频片段进行水平翻转"""
     if torch.rand(1) < flip_ratio:
-        return torch.stack([T.functional.hflip(frame) for frame in clip])
+        return torch.stack([F_vision.hflip(frame) for frame in clip])
     return clip
 
+
+def flip_channels_rgb_to_bgr(clip):
+    """将 [T, C, H, W] 的 RGB 视频片段转换为 BGR"""
+    return clip[:, [2, 1, 0], :, :]
+
+
+# --- 主数据加载函数 ---
 def get_data(
         data_path,
         tr_bs,
         vl_bs,
+        dataset_name,  # <-- 关键：直接从 config 传入
+        model_type='c3d', # <--- 新增model_type参数
         n_workers=4,
         clip_len=16,
+        augment_level=None,
         split_dir='.',
         video_dirname='videos',
-        transform_type='imagenet',
         initial_labeled_ratio=0.05,
-        test=False
+        seed=42
+        # test=False  # test 参数不再需要，由 is_train_set 控制
 ):
-    if 'hmdb' in data_path.lower():
-        dataset_name = "HMDB51"
-    elif 'ucf' in data_path.lower():
-        dataset_name = "UCF101"
+    print(f'Loading data for dataset: {dataset_name}')
+
+    dataset_map = {
+        'hmdb': (HmdbDataset, 'train_videos.txt', 'val_videos.txt'),
+        'ucf': (UcfDataset, 'train_videos.txt', 'val_videos.txt'),
+        'sthv2': (Sthv2Dataset, 'sthv2_train_list_videos.txt', 'sthv2_val_list_videos.txt'),
+        'kinetics': (KineticsDataset, 'train_list.txt', 'val_list.txt')
+    }
+
+    dataset_name = dataset_name.lower()
+    if 'ucf' in dataset_name:
+        dataset_name = 'ucf'
+    elif 'hmdb' in dataset_name:
+        dataset_name = 'hmdb'
+    elif 'sthv2' in dataset_name:
+        dataset_name = 'sthv2'
+    elif 'kinetics' in dataset_name:
+        dataset_name = 'kinetics'
     else:
-        raise ValueError(f"Unknown dataset in path: {data_path}")
+        raise ValueError(f"Unknown dataset: '{dataset_name}'. Supported datasets are 'ucf' or 'hmdb'.")
 
-    print(f'Loading video classification data for dataset: {dataset_name}')
+    if augment_level is not None:
+        print(f"为第二视角启用数据增强，等级: {augment_level}")
+        def apply_pil_transform_to_clip(clip, pil_transform):
+            # clip: (T, C, H, W) tensor
+            transformed_frames = []
+            for frame_tensor in clip: # frame_tensor is (C, H, W)
+                pil_image = F_vision.to_pil_image(frame_tensor.byte())
+                transformed_pil = pil_transform(pil_image)
+                transformed_tensor = F_vision.to_tensor(transformed_pil) * 255.0
+                transformed_frames.append(transformed_tensor)
+            return torch.stack(transformed_frames)
 
-    train_list = os.path.join(data_path, split_dir, 'train_videos.txt')
-    val_list = os.path.join(data_path, split_dir, 'val_videos.txt')
+        def apply_frame_level_transform(clip, transform):
+            # torchvision transforms expect (C, H, W)
+            clip_chw = clip.permute(1, 0, 2, 3).squeeze(0)  # TCHW -> CTHW
+            return torch.stack([transform(frame) for frame in clip_chw.permute(1, 0, 2, 3)]).permute(1, 0, 2, 3)
+
+        if augment_level == 1: # 轻度
+            aug_list = [Lambda(lambda clip: apply_pil_transform_to_clip(clip, T.ColorJitter(brightness=0.2, contrast=0.2)))]
+        elif augment_level == 2: # 中度
+            aug_list = [Lambda(lambda clip: apply_pil_transform_to_clip(clip, T.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2)))]
+        elif augment_level == 3: # 强度
+            aug_list = [
+                Lambda(lambda clip: apply_pil_transform_to_clip(clip, T.Compose([
+                    T.RandomResizedCrop(size=112, scale=(0.6, 1.0)),
+                    T.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5),
+                ]))),
+            ]
+        else:
+            raise ValueError(f"错误: 未知的 augment_level '{augment_level}'。")
+        # if augment_level == 1:
+        #     aug_list = [
+        #         Lambda(lambda clip: apply_frame_level_transform(clip, T.ColorJitter(brightness=0.2, contrast=0.2)))]
+        # elif augment_level == 2:
+        #     aug_list = [
+        #         Lambda(lambda clip: apply_frame_level_transform(clip, T.ColorJitter(brightness=0.4, contrast=0.4))),
+        #         Lambda(
+        #             lambda clip: apply_frame_level_transform(clip, T.RandomAffine(degrees=15, translate=(0.1, 0.1)))),
+        #     ]
+        # elif augment_level == 3:
+        #     aug_list = [
+        #         Lambda(lambda clip: apply_frame_level_transform(clip, T.Compose([
+        #             T.ToPILImage(),
+        #             T.RandomResizedCrop(size=112, scale=(0.6, 1.0)),
+        #             T.ColorJitter(brightness=0.5, contrast=0.5),
+        #             T.ToTensor()
+        #         ]))),
+        #     ]
+        # else:
+        #     raise ValueError(f"错误: 未知的 augment_level '{augment_level}'。")
+
+        final_aug_list = [
+                             Lambda(lambda clip: resize_short_side(clip, size=128)),
+                             Lambda(lambda clip: crop_clip(clip, 112, 'random')),
+                         ] + aug_list + [
+                             Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+                             Lambda(flip_channels_rgb_to_bgr),
+                             Lambda(lambda x: x.permute(1, 0, 2, 3)),
+                             Lambda(lambda clip: (clip - mean) / std)
+                         ]
+        augment_transform = Compose(final_aug_list)
+    else:
+        augment_transform = None
+    DatasetClass, train_ann_file, val_ann_file = dataset_map[dataset_name.lower()]
+
+    train_list = os.path.join(data_path, split_dir, train_ann_file)
+    val_list = os.path.join(data_path, split_dir, val_ann_file)
     video_dir = os.path.join(data_path, video_dirname)
 
-    scale_size, input_size = 128, 112
+    if model_type == 'timesformer':
+        # Timesformer 使用更标准的ImageNet均值/标准差
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1, 1) * 255.0
+        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1, 1) * 255.0
 
-    # Normalization 配置
-    if transform_type == 'basic':
-        normalize = Normalize([0.5] * 3, [0.5] * 3)
-    elif transform_type == 'imagenet':
-        normalize = Normalize([0.485, 0.456, 0.406],
-                                        [0.229, 0.224, 0.225])
-    elif transform_type == 'c3d':
-        mean = torch.tensor([104.0, 117.0, 128.0]).view(3, 1, 1, 1)
+        train_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=224)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'random')),
+            Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),  # TCHW -> CTHW
+            Lambda(lambda clip: (clip - mean) / std)
+        ])
+
+        val_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=224)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'center')),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),
+            Lambda(lambda clip: (clip - mean) / std),
+        ])
+    elif model_type == 'videomae':
+        # VideoMAE 的数据处理流程
+        print("为 VideoMAE 模型配置数据转换流程 (参照官方配置文件)...")
+
+        # --- 核心修改：直接使用您提供的MMAction2官方配置中的均值和标准差 ---
+        # mean=[123.675, 116.28, 103.53]
+        # std=[58.395, 57.12, 57.375]
+        mean = torch.tensor([123.675, 116.28, 103.53]).view(3, 1, 1, 1)
+        std = torch.tensor([58.395, 57.12, 57.375]).view(3, 1, 1, 1)
+
+        # 训练时的数据增强流程
+        train_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=224)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'random')),
+            Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+            # 注意：VideoMAE 和 C3D 不同，它不需要 BGR 转换，保持 RGB 即可
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),  # TCHW -> CTHW
+            Lambda(lambda clip: (clip - mean) / std)
+        ])
+
+        # 验证/测试时的数据处理流程
+        val_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=224)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'center')),
+            # 同样，不需要 BGR 转换
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),  # TCHW -> CTHW
+            Lambda(lambda clip: (clip - mean) / std),
+        ])
+    elif model_type == 'c3d':
+    # mean = torch.tensor([104.0, 117.0, 128.0]).view(3, 1, 1, 1)
+        mean = torch.tensor([124.0, 117.0, 104.0]).view(3, 1, 1, 1)  # 注意顺序是 R, G, B
         std = torch.tensor([1.0, 1.0, 1.0]).view(3, 1, 1, 1)
+
+        train_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=128)),
+            Lambda(lambda clip: crop_clip(clip, 112, 'center')),
+            # Lambda(lambda clip: crop_clip(clip, 112, 'random')),
+            # Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+            Lambda(flip_channels_rgb_to_bgr),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),
+            Lambda(lambda clip: (clip - mean) / std)
+        ])
+
+        val_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=128)),
+            Lambda(lambda clip: crop_clip(clip, 112, 'center')),
+            Lambda(flip_channels_rgb_to_bgr),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),
+            Lambda(lambda clip: (clip - mean) / std),
+        ])
     else:
-        raise ValueError("Please use transform_type='c3d' for this model.")
+        # 如果不是支持的模型，则明确报错
+        raise ValueError(f"不支持的模型类型 '{model_type}'。请在 data_utils.py 中为其添加数据处理流程。")
 
-    # ✅ 视频变换流程
-    # input_transform = Compose([
-    #     Lambda(lambda clip: resize_and_crop(clip)),                       # ✅ 新增：使用 torch.nn.functional.resize + crop
-    #     apply_normalize_per_frame(normalize_per_frame),                  # ✅ 逐帧归一化
-    #     Lambda(lambda x: x.permute(1, 0, 2, 3))                           # ✅ [T,C,H,W] → [C,T,H,W]
-    # ])
-    train_transform = Compose([
-        Lambda(lambda clip: resize_short_side(clip, size=128)),
-        Lambda(lambda clip: crop_clip(clip, 112, 'random')),
-        Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
-        Lambda(lambda x: x.permute(1, 0, 2, 3)),              # 先换位 -> [C, T, H, W]
-        Lambda(lambda clip: (clip - mean) / std)    ])
+    train_full_dataset = DatasetClass(train_list, video_dir,
+                                      transform=train_transform,
+                                      eval_transform=val_transform,
+                                      augment_transform=augment_transform,
+                                      clip_len=clip_len,
+                                      is_train_set=True,
+                                      initial_labeled_ratio=initial_labeled_ratio)
 
-    # (2) 验证/测试变换流程 (确定性处理)
-    val_transform = Compose([
-        Lambda(lambda clip: resize_short_side(clip, size=128)),
-        Lambda(lambda clip: crop_clip(clip, 112, 'center')),
-        Lambda(lambda x: x.permute(1, 0, 2, 3)),              # 先换位 -> [C, T, H, W]
-        Lambda(lambda clip: (clip - mean) / std),
-    ])
-
-    train_full_dataset = HmdbDataset(train_list, video_dir,
-                                     transform=train_transform,
-                                     clip_len=clip_len,
-                                     is_train_set=True,
-                                     eval_transform=val_transform,
-                                     initial_labeled_ratio=initial_labeled_ratio)
-
-    val_set = HmdbDataset(val_list, video_dir,
-                          transform=val_transform,
-                          clip_len=clip_len,
-                          is_train_set=False)
+    val_set = DatasetClass(val_list, video_dir,
+                           transform=val_transform,
+                           clip_len=clip_len,
+                           is_train_set=False)
 
     current_labeled_indices = list(train_full_dataset.labeled_video_ids)
     train_subset = Subset(train_full_dataset, current_labeled_indices)
+
+    g = torch.Generator()
+    g.manual_seed(seed)
 
     train_loader = DataLoader(train_subset,
                               batch_size=tr_bs,
                               shuffle=True,
                               num_workers=n_workers,
-                              drop_last=False)
+                              drop_last=False,
+                              worker_init_fn=seed_worker, # <-- 应用 worker 初始化函数
+                              generator=g)
 
     val_loader = DataLoader(val_set,
                             batch_size=vl_bs,
                             shuffle=False,
                             num_workers=n_workers)
 
-    candidate_set_for_al = train_full_dataset
-
-    return train_loader, train_full_dataset, val_loader, candidate_set_for_al
+    return train_loader, train_full_dataset, val_loader, train_full_dataset

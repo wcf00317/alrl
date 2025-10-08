@@ -1,0 +1,55 @@
+# 基本信息
+dataset: ucf101  # 数据集名称，修改为UCF101
+data_path: ../ucf101  # 数据集路径，修改为UCF101的路径
+ckpt_path: ./checkpoints  # 检查点保存路径
+exp_name: ucf101_exp  # 实验名称，修改为UCF101相关
+al_algorithm: dqn  # 主动学习算法
+
+# 数据处理
+input_size: 112  # 输入图像尺寸
+scale_size: 128  # 缩放尺寸
+train_batch_size: 32  # 训练批次大小
+val_batch_size: 8  # 验证批次大小
+num_each_iter: 5  # 每次迭代处理的样本数量
+
+# 路径加载控制
+load_weights: false  # 是否加载预训练权重
+load_opt: false  # 是否加载优化器状态
+exp_name_toload: null  # 要加载的实验名称
+exp_name_toload_rl: null  # 要加载的RL实验名称
+snapshot: 0  # 快照编号
+checkpointer: 0  # 检查点编号
+test: true  # 是否进行测试
+final_test: true  # 是否进行最终测试
+only_last_labeled: false  # 是否只使用最后标记的数据
+
+# 训练设置
+train: true  # 是否进行训练
+seed: 42  # 随机种子
+optimizer: SGD  # 优化器
+lr: 0.0001  # 学习率
+lr_dqn: 0.0001  # DQN的学习率
+weight_decay: 0.0005  # 权重衰减
+momentum: 0.9  # 动量
+gamma: 0.95  # 学习率调度器的gamma值
+gamma_scheduler_dqn: 0.99  # DQN学习率调度器的gamma值
+epoch_num: 45  # 训练的总epoch数
+patience: 30  # 早停的耐心值
+workers: 8
+# Active Learning 参数
+budget_labels: 550  # 标记预算
+rl_pool: 10  # RL池大小
+rl_episodes: 10  # RL训练回合数
+rl_buffer: 100  # RL缓冲区大小
+dqn_bs: 10  # DQN批次大小
+dqn_gamma: 0.99  # DQN的折扣因子
+dqn_epochs: 10
+
+# MMACTION2 配置
+#mmaction_config: c3d_configs/c3d_config.py  # MMACTION2模型配置路径
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py  # HAR模型配置文件路径，已是UCF101配置
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth # null # HAAR模型权重路径，如果需要加载预训练权重，请在此处指定路径
+num_classes: 101  # 类别数，根据UCF101数据集设置为101
+embed_dim: 4096  # 策略网络输入维度，需与compute_state输出一致
+clip_len: 16  # 视频剪辑长度
+al_train_epochs: 15

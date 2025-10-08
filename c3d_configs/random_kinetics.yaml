@@ -1,0 +1,61 @@
+# c3d_configs/random_kinetics.yaml
+
+# 基本信息
+dataset: kinetics200
+data_path: ../mini_kinetics # 确保这是您的数据集路径
+ckpt_path: ./checkpoints
+exp_name: kinetics200_random_baseline_exp
+al_algorithm: random
+
+# 数据处理
+input_size: 112
+scale_size: 128
+train_batch_size: 32
+val_batch_size: 8
+num_each_iter: 80 # 每轮主动学习随机选择20个样本
+
+# 路径加载控制
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null # 非RL任务
+snapshot: 0
+checkpointer: 1
+test: false
+final_test: false
+only_last_labeled: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+epoch_num: 30       # 最终收敛训练的总轮数
+patience: 10
+workers: 16         # 建议为Kinetics这样的大数据集增加workers数量
+al_train_epochs: 5 # 每个AL循环中的微调轮数
+
+# Active Learning 参数
+initial_labeled_ratio: 0.05
+budget_labels: 8000 # Kinetics-200 数据量较大，相应增加标注预算
+# 以下RL相关参数在 run_random.py 中不会被使用，但按模板保留
+rl_pool: 10
+rl_episodes: 10
+rl_buffer: 100
+dqn_bs: 80
+dqn_gamma: 0.99
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+
+# MMACTION2 配置
+# **关键**: 指向我们之前为Kinetics-200创建的专属配置文件
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+# **关键**: 依然从Sports-1M的预训练权重开始
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+num_classes: 200
+embed_dim: 4096
+clip_len: 16
+num_clips: 1

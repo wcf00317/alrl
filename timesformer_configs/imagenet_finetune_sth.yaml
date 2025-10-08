@@ -1,0 +1,47 @@
+# timesformer_configs/sthv2_supervised.yaml
+
+# 基本信息
+dataset: sthv2
+data_path: ../sthv2
+ckpt_path: ./checkpoints
+exp_name: sthv2_supervised_finetune_timesformer
+model_type: timesformer
+
+# 数据处理
+train_batch_size: 30   # Timesformer模型较大，建议使用较小的batch size
+val_batch_size: 4
+workers: 8
+clip_len: 8           # Timesformer通常使用8帧输入
+
+# 路径加载控制
+checkpointer: false
+test: false
+final_test: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.0005          # 这是一个适用于微调的初始学习率
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+epoch_num: 40         # sthv2数据集较大，可以适当增加训练轮数
+patience: 12          # 早停耐心值
+
+# 学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 30           # 匹配 epoch_num
+    by_epoch: True
+    milestones: [10, 20] # 在第15和25个epoch降低学习率
+    gamma: 0.1
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+# 建议使用在Kinetics-400上预训练的权重进行微调
+model_ckpt_path: ../pretrained_checkpoints/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb_20220815-78f05367.pth
+num_classes: 20      # sthv2 数据集的类别数
+embed_dim: 768        # Timesformer (base)的特征维度是768

@@ -5,11 +5,7 @@ import os
 import random
 from scipy.stats import entropy
 
-import torch
 import torch.nn as nn
-from torch.autograd import Variable
-import torch.nn.functional as F
-from torch.utils.data import Subset, DataLoader
 
 from utils.final_utils import get_logfile
 from utils.progressbar import progress_bar
@@ -37,10 +33,36 @@ def create_models(dataset, model_cfg_path, model_ckpt_path, num_classes,
     # Step 1: 初始化视频分类模型（例如C3D、VideoMAE、TSN等）
     model = init_recognizer(
         config=model_cfg_path,
-        checkpoint=model_ckpt_path,
+        checkpoint=None,
         device='cuda'
     )
+    if model_ckpt_path:
+        print(f"Manually loading and fixing checkpoint from: {model_ckpt_path}")
+        # 使用 weights_only=True 是更安全的做法
+        checkpoint = torch.load(model_ckpt_path, map_location='cpu', weights_only=True)
 
+        # 如果权重在一个 'state_dict' 键下，先取出来
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint
+
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            # 检查是否是需要添加前缀的 backbone 权重
+            if k.startswith('backbone.'):
+                new_state_dict[k] = v
+                # 为C3D等旧模型添加前缀
+            elif not k.startswith('cls_head'):
+                new_key = 'backbone.' + k
+                new_state_dict[new_key] = v
+
+                # 如果是 cls_head 的权重，则保持原样 (虽然本次加载中不需要)
+
+
+        # 使用 load_state_dict 加载修复后的权重，strict=False 允许 cls_head 不匹配
+        model.load_state_dict(new_state_dict, strict=False)
+        print("Checkpoint loaded successfully after fixing keys.")
     print('HAR Backbone model created from MMACTION2.')
 
     # Step 2: 策略网络（DQN或Transformer）
@@ -99,6 +121,7 @@ def load_models_for_har(model, load_weights, exp_name_toload, snapshot,
         print(f'[LOAD] Loading HAR backbone model from {model_path}')
         checkpoint = torch.load(model_path)
         model.load_state_dict(checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint)
+
 
     if checkpointer and os.path.isfile(resume_path):
         print(f'[RESUME] Resuming model from {resume_path}')
@@ -226,6 +249,35 @@ def compute_state(args, model, video_indices, candidate_set, train_set=None):
     return state, video_indices
 
 
+# 文件路径: wcf00317/alrl/alrl-reward_model/models/model_utils.py
+
+# ... (文件内所有现有代码保持不变) ...
+
+# ====================================================================
+# ========= 新增一个独立的、专门用于熵选择的函数 =========
+# ====================================================================
+def select_action_by_entropy(args, entropies):
+    """
+    一个专门根据熵值来选择样本的独立函数，以确保不影响其他AL算法。
+
+    参数:
+    - args: 命令行参数，主要用于获取 num_each_iter。
+    - entropies: (list or torch.Tensor) 包含所有候选视频熵值的列表或张量。
+
+    返回:
+    - action_indices: (torch.Tensor) 被选中的熵值最高的 k 个样本的索引。
+    """
+    print('[Entropy] 使用独立的熵选择函数...')
+    if not isinstance(entropies, torch.Tensor):
+        entropies = torch.tensor(entropies)
+
+    k = args.num_each_iter
+
+    # 使用 torch.topk 找到熵值最高的 k 个样本的索引
+    _, action_indices = torch.topk(entropies, k, dim=0)
+
+    return action_indices
+
 # def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
 #     """
 #     为 HAR 主动学习计算 RL 状态。
@@ -322,6 +374,7 @@ def compute_state(args, model, video_indices, candidate_set, train_set=None):
 #     return all_state, candidate_video_indices # 这里的 candidate_video_indices 现在直接是视频ID列表
 
 
+
 import torch
 import torch.nn.functional as F
 import time
@@ -329,92 +382,79 @@ import time
 
 def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
     """
-    计算RL状态的【特征嵌入修正版】。
-    此版本提取模型倒数第二层的特征嵌入（默认为4096维），以匹配策略网络的输入维度。
-    注意：此版本仍然是逐一处理视频，速度较慢，但逻辑清晰，便于调试。
-
-    :param args: 参数对象，需要包含 embed_dim (例如 4096)
-    :param model: MMAction2 视频分类模型
-    :param train_set: 完整的数据集对象
-    :param candidate_video_indices: List[int]，候选未标注视频ID。
-    :param labeled_video_indices: List[int]，可选，已标注视频的ID列表。
-    :return:
-        all_state: dict, 包含 'pool' 和 'subset' 的状态特征张量。
-        candidate_video_indices: 原样返回。
+    【熵奖励修正版】
+    此版本同时计算4096维特征嵌入（用于状态）和每个视频的熵（用于奖励模型训练数据），
+    并作为三个独立的变量返回，以匹配 run.py 中的调用。
     """
     s = time.time()
-    print('Computing state with 4096-dim feature embeddings...')
+    print('Computing state (4096-dim embeddings) AND entropy for reward calculation...')
     model.eval()
 
+    # --- 新增：初始化两个列表，分别存储特征和熵 ---
+    state_pool_features = []
+    candidate_entropies = []
+
     # --------------------------------------------------------------------
-    # 为了避免代码重复，我们先定义一个处理单个视频的内部辅助函数
-    def _get_feature_for_single_video(vid_idx):
-        # 统一使用 train_set 的 get_video 方法，它应该返回一个简单的 [C, T, H, W] 张量
+    # 内部辅助函数现在需要同时返回特征和熵
+    def _get_feature_and_entropy_for_single_video(vid_idx):
         video_tensor = train_set.get_video(vid_idx)
-        # 增加批次维度(B=1)，并移动到 CUDA
         video_tensor = video_tensor.unsqueeze(0).cuda()
 
         with torch.no_grad():
-            # MODIFIED: 调用模型的 extract_feat 方法提取特征，而不是执行完整的分类前向传播。
-            # REASON: 我们需要的是分类头(cls_head)之前的特征嵌入，它的维度（通常是4096）与策略网络的输入相匹配。
-            #         MMAction2中的识别器(recognizer)通常都实现了 extract_feat 方法来获取主干网络的输出。
+            # 1. 为了计算熵，我们仍然需要做一次完整的分类前向传播来获取概率
+            # print(video_tensor.shape)
+            logits = model(video_tensor, return_loss=False)
+            logits = model.cls_head(logits)
+            if logits.shape[0] > 1:
+                logits = logits.mean(dim=0, keepdim=True)
+
+            probs = F.softmax(logits, dim=1)
+            entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1).item()
+
+            # 2. 获取4096维特征用于状态表示
             features = model.extract_feat(video_tensor)[0]
-            #print(features)
-            #print(features.shape)
-            # MODIFIED: 如果模型为每个视频生成了多个clips的特征，我们需要对它们进行平均池化。
-            # REASON: 这与您之前对logits的处理方式保持一致，确保每个视频最终只由一个特征向量表示。
-            if features.shape[0] > 1:  # 如果有多个clips
-                features = features.mean(dim=0, keepdim=True)  # 形状从 [N, D] 变为 [1, D]
+            if features.shape[0] > 1:
+                features = features.mean(dim=0, keepdim=True)
 
-            # MODIFIED: 直接使用提取到的特征作为最终的特征向量。
-            # REASON: 我们不再需要计算softmax概率、熵或最大概率值，因为状态表示本身就是高维特征。
-            feature_vector = features  # 形状已经是 [1, D] 或 [D]，取决于模型实现
+            if features.dim() == 1:
+                features = features.unsqueeze(0)
 
-            # 确保返回的张量形状是 [1, D]，方便后续拼接
-            if feature_vector.dim() == 1:
-                feature_vector = feature_vector.unsqueeze(0)
-
-            return feature_vector
+            # 同时返回特征和熵
+            return features, entropy
 
     # --------------------------------------------------------------------
 
-    # 1. 计算未标注视频池的状态
-    state_pool_features = []
+    # 1. 计算未标注视频池的状态和熵
     if candidate_video_indices:
         for vid_idx in candidate_video_indices:
-            feature = _get_feature_for_single_video(vid_idx)
+            # 接收特征和熵两个返回值
+            feature, entropy = _get_feature_and_entropy_for_single_video(vid_idx)
             state_pool_features.append(feature)
+            # 将熵存入列表
+            candidate_entropies.append(entropy)
 
-    # MODIFIED: 如果池为空，创建一个维度与特征嵌入维度(embed_dim)匹配的空张量。
-    # REASON: 原来是 args.num_classes + 2，现在需要匹配新的特征维度。
-    state_pool_tensor = torch.cat(state_pool_features, dim=0) if state_pool_features else torch.empty(0,
-                                                                                                      args.embed_dim)
+    state_pool_tensor = torch.cat(state_pool_features, dim=0) if state_pool_features else torch.empty(0, args.embed_dim)
 
-    # 2. 计算已标注视频子集的状态
+    # 2. 计算已标注视频子集的状态 (这部分逻辑不变，我们只需要特征)
     if labeled_video_indices:
         state_subset_features = []
         for vid_idx in labeled_video_indices:
-            feature = _get_feature_for_single_video(vid_idx)
+            # 在这里我们只需要特征，可以忽略熵的返回值
+            feature, _ = _get_feature_and_entropy_for_single_video(vid_idx)
             state_subset_features.append(feature)
 
-        # ✅ 首先，像原来一样拼接成一个 [num_labeled, embed_dim] 的大张量
         all_subset_features = torch.cat(state_subset_features, dim=0)
-
-        # ✅ 然后，对所有已标注视频的特征取平均值，聚合成一个单一的向量
-        # keepdim=True 确保输出形状是 [1, embed_dim] 而不是 [embed_dim]
         fixed_size_subset_tensor = torch.mean(all_subset_features, dim=0, keepdim=True)
     else:
-        # MODIFIED: 如果没有任何已标注视频，返回一个与特征嵌入维度(embed_dim)匹配的零向量。
-        # REASON: 原来是 args.num_classes，现在需要匹配新的特征维度。
         fixed_size_subset_tensor = torch.zeros(1, args.embed_dim, device='cuda')
 
     # 3. 构建最终的状态字典
     all_state = {'pool': state_pool_tensor.cpu(), 'subset': fixed_size_subset_tensor.cpu()}
 
-    print(
-        f'State computed! Pool shape: {all_state["pool"].shape}, Subset shape: {all_state["subset"].shape}. Time: {time.time() - s:.2f}s')
+    print(f'State and entropies computed! Pool shape: {all_state["pool"].shape}. Time: {time.time() - s:.2f}s')
 
-    return all_state, candidate_video_indices
+    # --- 核心修改：返回三个值 ---
+    return all_state, candidate_video_indices, candidate_entropies
 
 # def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
 #     """

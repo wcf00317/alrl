@@ -1,0 +1,76 @@
+# c3d_configs/sth_har_ebm.yaml
+
+# ===================================================================
+#                       通用配置
+# ===================================================================
+# --- 基本信息 (来自 c3d_finetune_from_sports1m) ---
+dataset: sthv2
+data_path: ../sthv2
+ckpt_path: ./checkpoints
+exp_name: c3d_base_ebm_sthv2 # 实验名: 融合C3D, EBM和STHV2
+model_type: c3d              # <-- 关键: 指定模型为c3d
+seed: 42
+
+# --- 数据处理 & 模型配置 (来自 c3d_finetune_from_sports1m) ---
+train_batch_size: 30
+val_batch_size: 8
+workers: 16
+clip_len: 16
+# --- MMACTION2 配置 ---
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+# --- 关键修改：确保类别数正确 ---
+num_classes: 20 # 注意：请根据你的STHV2子集的实际类别数修改此值
+
+# ===================================================================
+#             阶段 1: 特征两端提取法
+# (参数参考 ucf_har_ebm.yaml 和 hmdb_har_ebm.yaml)
+# ===================================================================
+initial_labeled_ratio: 0.05
+budget_labels: 2000 # STHV2数据集较大，预算相应增加
+num_each_iter: 20
+
+# --- 启用的特征策略 (用于生成best/worst对) ---
+use_statistical_features: true
+use_diversity_feature: true
+use_representativeness_feature: true
+use_prediction_margin_feature: true
+use_labeled_distance_feature: true
+use_neighborhood_density_feature: true
+use_temporal_consistency_feature: true
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练
+# ===================================================================
+reward_model_type: ebm # <-- 关键: 指定使用EBM
+
+# ===================================================================
+#                       阶段 3: RL智能体训练
+# ===================================================================
+al_algorithm: dqn
+# --- 训练设置 (融合了finetune和AL的配置) ---
+optimizer:
+  type: 'SGD'
+  lr: 0.00005        # <-- 使用为C3D微调优化的超小学习率
+  weight_decay: 0.0005
+  momentum: 0.9
+
+epoch_num: 100       # AL流程使用更多的epochs
+patience: 20
+al_train_epochs: 15
+
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 100
+    by_epoch: True
+    milestones: [40, 80] # 匹配新的epoch_num
+    gamma: 0.1
+
+# --- DQN 智能体训练参数 (参考 ucf_har_ebm.yaml) ---
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_buffer: 100
+dqn_bs: 20 # 与num_each_iter保持一致
+dqn_gamma: 0.99

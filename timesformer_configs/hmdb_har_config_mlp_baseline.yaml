@@ -1,0 +1,95 @@
+# timesformer_configs/hmdb_har_config_mlp_baseline.yaml
+
+# ===================================================================
+#                       通用配置 (对所有阶段生效)
+# ===================================================================
+# --- 基本信息 ---
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+# --- 修改：为新实验起一个清晰的实验名 ---
+exp_name: hmdb_alrm_mlp_baseline_timesformer_exp
+# --- 关键修改：指定模型为Timesformer ---
+model_type: timesformer
+al_algorithm: dqn
+# --- 新增：指定使用MLP作为奖励模型 ---
+reward_model_type: mlp
+
+# --- 数据处理 (参考Timesformer配置) ---
+train_batch_size: 8   # Timesformer模型较大，建议使用较小的batch size
+val_batch_size: 4
+workers: 8
+clip_len: 8           # Timesformer通常使用8帧作为输入
+num_each_iter: 20      # AL每轮选择的样本数
+
+# --- 路径加载控制 (与C3D基线保持一致) ---
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null
+snapshot: 0
+checkpointer: 1
+test: false
+final_test: false
+only_last_labeled: false
+
+# ===================================================================
+#             阶段 1 & 3: 主动学习与RL智能体训练
+# ===================================================================
+# --- 训练设置 (参考timesformer_configs/imagenet_finetune_hmdb51.yaml) ---
+train: true
+seed: 42
+# --- 关键修改：为Timesformer设置优化器和学习率调度器 ---
+optimizer:
+  type: 'SGD'
+  lr: 0.0005          # 采用为Timesformer优化的学习率
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+epoch_num: 30         # 最终收敛训练的总轮数
+patience: 10          # 早停耐心
+al_train_epochs: 15   # AL循环中，每次微调的Epoch数
+param_scheduler:      # 学习率调度器
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 30 # 应与epoch_num匹配
+    by_epoch: True
+    milestones: [15, 25]
+    gamma: 0.1
+
+# --- DQN 智能体训练参数 (与C3D基线保持一致) ---
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_episodes: 10
+rl_buffer: 100
+dqn_bs: 20
+dqn_gamma: 0.99
+
+# --- Active Learning 参数 (与C3D基线保持一致) ---
+initial_labeled_ratio: 0.05
+budget_labels: 578
+
+# --- MMACTION2 模型配置 (关键修改) ---
+# --- 参考 timesformer_configs/imagenet_finetune_hmdb51.yaml ---
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+# --- 使用在ImageNet上预训练的VIT权重作为TimeSformer的起点 ---
+model_ckpt_path: ../pretrained_checkpoints/vit_base_patch16_224.pth
+num_classes: 51
+embed_dim: 768        # Timesformer (base)的特征维度是768
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练 (ALRM Training)
+# ===================================================================
+# 这部分参数在run_unified_al_workflow.py脚本内部处理，但我们在此处保留
+# reward_model_type: mlp (已在通用配置中定义)
+
+# --- 特征提取器配置 (用于阶段1数据收集和阶段3的RL State) ---
+# --- 和C3D基线保持一致，您可以按需开启 ---
+use_statistical_features: false
+use_diversity_feature: false
+use_representativeness_feature: false
+use_prediction_margin_feature: false
+use_labeled_distance_feature: false
+use_neighborhood_density_feature: false
+use_temporal_consistency_feature: false

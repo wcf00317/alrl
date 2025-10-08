@@ -1,0 +1,45 @@
+# c3d_configs/sports1m_entropy_kinetics.yaml
+
+# 基本信息
+dataset: kinetics200
+data_path: ../mini_kinetics # 确保这是您的数据集路径
+ckpt_path: ./checkpoints
+exp_name: kinetics200_entropy_baseline_exp
+al_algorithm: entropy # **关键修改: 采样策略设置为entropy**
+
+# 数据处理
+train_batch_size: 32
+val_batch_size: 8
+workers: 16
+clip_len: 16
+
+# 主动学习 (Active Learning) 参数
+initial_labeled_ratio: 0.05
+budget_labels: 8000       # **关键修改: 总标注预算**
+num_each_iter: 80         # **关键修改: 每轮选择的样本数**
+al_train_epochs: 5     # 每个AL循环中的微调轮数
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+epoch_num: 30           # 最终收敛训练的总轮数
+patience: 10
+
+# MMACTION2 配置
+# 依然使用为Kinetics-200修改的专属配置文件
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+# 从Sports-1M的预训练权重开始
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+num_classes: 200
+embed_dim: 4096
+
+# 以下RL相关参数在此流程中不会被主要使用，但按模板保留
+rl_pool: 10
+dqn_bs: 80 # 与num_each_iter保持一致
+dqn_gamma: 0.99
+lr_dqn: 0.0001

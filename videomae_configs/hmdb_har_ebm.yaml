@@ -1,0 +1,70 @@
+# videomae_configs/ebm_hmdb51_base.yaml
+
+# ===================================================================
+#                       通用配置
+# ===================================================================
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: videomaev2_base_ebm_hmdb51 # 实验名
+model_type: videomae                 # <-- 关键: 指定模型为videomae
+seed: 42
+
+# --- 数据处理 & 模型配置 ---
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 16
+model_cfg_path: ../mmaction2/configs/recognition/videomaev2/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400.py
+model_ckpt_path: "../pretrained_checkpoints/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400_20230510-3e7f93b2.pth"
+num_classes: 51
+embed_dim: 768
+
+# ===================================================================
+#             阶段 1: 特征两端提取法
+# ===================================================================
+initial_labeled_ratio: 0.05
+budget_labels: 578
+num_each_iter: 20 # EBM方法通常每轮评估多个策略，可以适当减少num_each_iter
+
+# --- 启用的特征策略 (用于生成best/worst对) ---
+use_statistical_features: true
+use_diversity_feature: true
+use_representativeness_feature: true
+use_prediction_margin_feature: true
+use_labeled_distance_feature: true
+use_neighborhood_density_feature: true
+use_temporal_consistency_feature: true
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练
+# ===================================================================
+reward_model_type: ebm # <-- 关键: 指定使用EBM
+
+# ===================================================================
+#                       阶段 3: RL智能体训练
+# ===================================================================
+al_algorithm: dqn
+# --- 训练设置 (使用AdamW优化器, 20个收敛周期) ---
+optimizer:
+  type: 'SGD'
+  lr: 0.00005
+  weight_decay: 0.05
+epoch_num: 100
+patience: 20
+al_train_epochs: 15
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 100
+    by_epoch: True
+    milestones: [40, 80]
+    gamma: 0.1
+
+# --- DQN 智能体训练参数 ---
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_buffer: 100
+dqn_bs: 20 # 与num_each_iter保持一致
+dqn_gamma: 0.99

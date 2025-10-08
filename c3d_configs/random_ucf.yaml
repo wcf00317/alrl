@@ -1,0 +1,57 @@
+# 基本信息
+dataset: ucf101
+data_path: ../ucf101
+ckpt_path: ./checkpoints
+exp_name: ucf101_random_baseline_exp
+al_algorithm: random
+
+# 数据处理
+input_size: 112
+scale_size: 128
+train_batch_size: 32
+val_batch_size: 8
+num_each_iter: 20
+
+# 路径加载控制
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null
+snapshot: 0
+checkpointer: 1
+test: false
+final_test: false
+only_last_labeled: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.0001
+lr_dqn: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+gamma_scheduler_dqn: 0.99
+epoch_num: 30
+patience: 10
+workers: 8
+al_train_epochs: 15
+
+# Active Learning 参数
+budget_labels: 950
+initial_labeled_ratio: 0.05
+rl_pool: 10
+rl_episodes: 10
+rl_buffer: 100
+dqn_bs: 20
+dqn_gamma: 0.99
+
+# MMACTION2 配置
+mmaction_config: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+num_classes: 101
+embed_dim: 4096
+clip_len: 16
+num_clips: 1

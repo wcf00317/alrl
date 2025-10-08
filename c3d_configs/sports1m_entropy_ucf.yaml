@@ -1,0 +1,48 @@
+# 基本信息
+dataset: ucf101
+data_path: ../ucf101
+ckpt_path: ./checkpoints
+exp_name: ucf101_entropy_from_sports1m_exp
+al_algorithm: entropy
+
+# 数据处理
+train_batch_size: 32
+val_batch_size: 8
+num_each_iter: 20
+workers: 8
+
+# 路径加载控制
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null
+snapshot: 0
+checkpointer: 1
+test: false
+final_test: false
+only_last_labeled: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+epoch_num: 30
+patience: 10
+al_train_epochs: 15
+
+# Active Learning 参数
+initial_labeled_ratio: 0.05
+budget_labels: 1000
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+# --- 关键：使用在 Sports-1M 上预训练的 C3D 模型 ---
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+num_classes: 101
+embed_dim: 4096
+clip_len: 16
+num_clips: 1

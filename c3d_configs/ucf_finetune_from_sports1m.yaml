@@ -1,0 +1,33 @@
+# 基本信息
+dataset: ucf101
+data_path: ../ucf101
+ckpt_path: ./checkpoints
+exp_name: ucf101_finetune_from_sports1m # 建议起一个清晰的实验名
+
+# 数据处理
+train_batch_size: 30  # 与官方的30接近，可以保留
+val_batch_size: 8
+workers: 8
+clip_len: 16
+
+# 路径加载控制
+# 在监督学习模式下，模型加载由 model_ckpt_path 控制，这些可以设为 false 或移除
+checkpointer: false
+test: false
+final_test: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.001              # <-- 修改
+weight_decay: 0.0005
+momentum: 0.9
+# gamma: 0.95          # <-- 此参数在 train_supervised.py 中不生效，可移除
+epoch_num: 45          # <-- 修改
+patience: 45           # <-- 建议修改
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+num_classes: 101

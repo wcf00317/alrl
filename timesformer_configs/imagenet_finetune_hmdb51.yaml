@@ -1,0 +1,46 @@
+# timesformer_configs/imagenet_finetune_hmdb51.yaml
+
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: imagenet_finetune_hmdb51 # 已按要求更新
+model_type: timesformer
+
+# 数据处理
+train_batch_size: 8   # Timesformer模型较大，建议使用较小的batch size
+val_batch_size: 4
+workers: 8
+clip_len: 8           # Timesformer通常使用8帧输入
+
+# 训练设置
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.0005
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+epoch_num: 15         # <-- HMDB51更小，使用更少的epoch
+patience: 8
+
+# 新增：学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 15
+    by_epoch: True
+    milestones: [7, 12] # 相应提前milestones
+    gamma: 0.1
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/vit_base_patch16_224.pth
+num_classes: 51
+embed_dim: 768        # Timesformer (base)的特征维度是768
+
+# 路径加载控制
+checkpointer: false
+test: false
+final_test: false

@@ -1,0 +1,47 @@
+# videomae_configs/kinetics_entropy_ucf101.yaml
+
+# 基本信息
+dataset: ucf101
+data_path: ../ucf101
+ckpt_path: ./checkpoints
+exp_name: videomaev2_base_entropy_ucf101_exp # 实验名
+model_type: videomae
+al_algorithm: entropy # <-- 核心: 指定为熵采样
+
+# 数据处理
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 16
+num_each_iter: 20 # <-- 已按要求修改
+
+# 训练设置
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.001
+  weight_decay: 0.05
+epoch_num: 100 # <-- 已按要求修改
+patience: 20 # <-- 已按要求修改
+al_train_epochs: 10
+
+# 学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 100 # 匹配 epoch_num
+    by_epoch: True
+    milestones: [40, 80]
+    gamma: 0.1
+
+# Active Learning 参数
+initial_labeled_ratio: 0.05
+budget_labels: 1000
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/videomaev2/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400.py
+# --- 关键: 使用您指定的 Kinetics 预训练权重 ---
+model_ckpt_path: "../pretrained_checkpoints/vit-base-p16_videomaev2-vit-g-dist-k710-pre_16x4x1_kinetics-400_20230510-3e7f93b2.pth"
+num_classes: 101
+embed_dim: 768

@@ -1,0 +1,60 @@
+# timesformer_configs/imagenet_random_kinetics.yaml
+
+# 基本信息
+dataset: kinetics200
+data_path: ../mini_kinetics # 请确保这是您数据集的正确路径
+ckpt_path: ./checkpoints
+exp_name: imagenet_random_al_kinetics200_exp
+model_type: timesformer
+al_algorithm: random
+
+# 数据处理
+train_batch_size: 8
+val_batch_size: 4
+workers: 8           # 建议为Kinetics这样的大数据集增加workers数量
+clip_len: 8
+num_each_iter: 80     # <-- 已按要求修改：每轮选择80个样本
+
+# 路径加载控制
+load_weights: false
+load_opt: false
+exp_name_toload: null
+exp_name_toload_rl: null
+snapshot: 0
+checkpointer: true
+test: false
+final_test: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.0005
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+epoch_num: 30         # AL任务结束后，最终收敛训练的总轮数
+patience: 10
+al_train_epochs: 5   # AL循环中，每次微调的Epoch数
+
+# 学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 30 # 应与epoch_num匹配
+    by_epoch: True
+    milestones: [15, 25]
+    gamma: 0.1
+
+# Active Learning 参数
+initial_labeled_ratio: 0.05
+budget_labels: 8000   # <-- 已按要求修改：总标注预算为8000
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+# **关键**: 权重指向在 ImageNet 上预训练的 ViT 模型
+model_ckpt_path: ../pretrained_checkpoints/vit_base_patch16_224.pth
+# **关键**: 类别数设置为200
+num_classes: 200
+embed_dim: 768        # TimeSformer (base)的特征维度
