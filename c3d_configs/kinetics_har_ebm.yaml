@@ -1,0 +1,63 @@
+# c3d_configs/kinetics_har_ebm.yaml
+
+# ===================================================================
+#                       通用配置 (对所有阶段生效)
+# ===================================================================
+dataset: kinetics200
+data_path: ../mini_kinetics
+ckpt_path: ./checkpoints
+exp_name: kinetics200_ebm_workflow_exp # EBM实验在Kinetics-200上的专属名称
+seed: 42
+
+# --- 数据处理 & 模型配置 ---
+train_batch_size: 32
+val_batch_size: 8
+workers: 16 # Kinetics数据集较大，建议增加workers
+clip_len: 16
+# --- 关键修改：使用为Kinetics-200创建的专属配置文件 ---
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth
+num_classes: 200
+embed_dim: 4096
+
+# ===================================================================
+#             阶段 1: 特征两端提取法
+# ===================================================================
+# --- AL预算和每轮选择的样本数 ---
+initial_labeled_ratio: 0.05
+budget_labels: 8000 # 总标注预算
+num_each_iter: 80 # 每轮主动学习选择的样本数
+
+# --- 启用的特征策略 (这些将用于生成best/worst对) ---
+use_statistical_features: true
+use_diversity_feature: true
+use_representativeness_feature: true
+use_prediction_margin_feature: true
+use_labeled_distance_feature: true
+use_neighborhood_density_feature: true
+use_temporal_consistency_feature: true
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练
+# ===================================================================
+# --- 关键：指定使用EBM作为奖励模型 ---
+reward_model_type: ebm
+
+# ===================================================================
+#                       阶段 3: RL智能体训练
+# ===================================================================
+al_algorithm: dqn
+optimizer: SGD
+lr: 0.001
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+epoch_num: 30
+patience: 10
+al_train_epochs: 5
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_buffer: 100
+dqn_bs: 80 # DQN批大小应与每轮选择数(num_each_iter)保持一致
+dqn_gamma: 0.99

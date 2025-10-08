@@ -1,0 +1,33 @@
+# c3d_configs/kinetics_finetune_from_sports1m.yaml
+
+# 基本信息
+dataset: kinetics200
+data_path: ../mini_kinetics
+ckpt_path: ./checkpoints
+exp_name: kinetics200_finetune_from_sports1m
+
+# 数据处理
+train_batch_size: 30
+val_batch_size: 8
+workers: 30
+clip_len: 16
+
+# 路径加载控制
+checkpointer: false
+test: false
+final_test: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer: SGD
+lr: 0.0001
+weight_decay: 0.0005
+momentum: 0.9
+epoch_num: 60      # 增加训练周期以适应更大的数据集
+patience: 20       # 相应增加早停耐心
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+num_classes: 200   # **关键修改：类别数更新为200**

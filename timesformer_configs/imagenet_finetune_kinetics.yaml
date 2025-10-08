@@ -1,0 +1,48 @@
+# timesformer_configs/imagenet_finetune_kinetics.yaml
+
+# 基本信息
+dataset: kinetics200
+data_path: ../mini_kinetics # 请确保这是您mini-kinetics数据集的正确路径
+ckpt_path: ./checkpoints
+exp_name: imagenet_finetune_kinetics200
+model_type: timesformer
+
+# 数据处理
+train_batch_size: 16   # TimeSformer模型较大，建议使用较小的batch size
+val_batch_size: 4
+workers: 8
+clip_len: 8           # TimeSformer通常使用8帧输入
+
+# 路径加载控制
+checkpointer: false
+test: false
+final_test: false
+
+# 训练设置
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.0005          # 微调的初始学习率
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+epoch_num: 30         # Kinetics数据集较大，增加训练周期
+patience: 15          # 相应增加早停耐心
+
+# 学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 30 # 匹配 epoch_num
+    by_epoch: True
+    milestones: [15, 25] # 在第15和25个epoch降低学习率
+    gamma: 0.1
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+# **关键**: 权重指向在 ImageNet 上预训练的 ViT 模型
+model_ckpt_path: ../pretrained_checkpoints/vit_base_patch16_224.pth
+# **关键**: 类别数设置为200
+num_classes: 200
+embed_dim: 768        # TimeSformer (base) 的特征维度

@@ -1,0 +1,81 @@
+# c3d_configs/sth_unified_al.yaml
+# 适用于 run_unified_al_workflow.py 的C3D模型在STHV2数据集上的统一主动学习配置文件
+
+# ===================================================================
+#                       通用配置
+# ===================================================================
+# --- 基本信息 (来自 c3d_finetune_from_sports1m) ---
+dataset: sthv2
+data_path: ../sthv2
+ckpt_path: ./checkpoints
+exp_name: c3d_unified_al_sthv2 # 实验名: Unified AL Workflow
+model_type: c3d                # <-- 关键: 指定模型为c3d
+seed: 42
+
+# --- 数据处理 & 模型配置 (来自 c3d_finetune_from_sports1m) ---
+train_batch_size: 30
+val_batch_size: 8
+workers: 16
+clip_len: 16
+# --- MMACTION2 配置 ---
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+# --- 关键修改：确保类别数正确 ---
+num_classes: 20 # 注意：请根据你的STHV2子集的实际类别数修改此值
+
+# ===================================================================
+#             阶段 1: 特征/策略定义
+# ===================================================================
+initial_labeled_ratio: 0.05
+budget_labels: 2000 # 整个主动学习流程的总标注预算
+num_each_iter: 20   # 每一轮迭代中选择的样本数量
+
+# --- 启用的特征策略 (用于奖励模型或RL状态) ---
+# 根据你的工作流需求，启用或禁用这些特征
+use_statistical_features: false
+use_diversity_feature: false
+use_representativeness_feature: false
+use_prediction_margin_feature: false
+use_labeled_distance_feature: false
+use_neighborhood_density_feature: false
+use_temporal_consistency_feature: false
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练
+# ===================================================================
+# 选择你的奖励模型类型, 例如 'ebm', 'mlp', etc.
+# 如果你的工作流不需要独立的奖励模型，可以忽略此部分
+reward_model_type: mlp
+
+# ===================================================================
+#                       阶段 3: AL 智能体/算法
+# ===================================================================
+# 选择你的主动学习算法, 例如 'dqn', 'random', 'core_set', etc.
+al_algorithm: dqn
+
+# --- 主模型训练设置 ---
+optimizer:
+  type: 'SGD'
+  lr: 0.00005        # <-- 使用为C3D微调优化的超小学习率
+  weight_decay: 0.0005
+  momentum: 0.9
+
+epoch_num: 100       # 主模型训练的总周期数
+patience: 20
+al_train_epochs: 15  # 每次AL迭代后，主模型的再训练周期数
+
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 100
+    by_epoch: True
+    milestones: [40, 80] # 匹配新的epoch_num
+    gamma: 0.1
+
+# --- DQN 智能体训练参数 (如果 al_algorithm 设置为 'dqn') ---
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_buffer: 100
+dqn_bs: 20 # 通常与 num_each_iter 保持一致
+dqn_gamma: 0.99

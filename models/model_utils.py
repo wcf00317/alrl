@@ -249,6 +249,35 @@ def compute_state(args, model, video_indices, candidate_set, train_set=None):
     return state, video_indices
 
 
+# 文件路径: wcf00317/alrl/alrl-reward_model/models/model_utils.py
+
+# ... (文件内所有现有代码保持不变) ...
+
+# ====================================================================
+# ========= 新增一个独立的、专门用于熵选择的函数 =========
+# ====================================================================
+def select_action_by_entropy(args, entropies):
+    """
+    一个专门根据熵值来选择样本的独立函数，以确保不影响其他AL算法。
+
+    参数:
+    - args: 命令行参数，主要用于获取 num_each_iter。
+    - entropies: (list or torch.Tensor) 包含所有候选视频熵值的列表或张量。
+
+    返回:
+    - action_indices: (torch.Tensor) 被选中的熵值最高的 k 个样本的索引。
+    """
+    print('[Entropy] 使用独立的熵选择函数...')
+    if not isinstance(entropies, torch.Tensor):
+        entropies = torch.tensor(entropies)
+
+    k = args.num_each_iter
+
+    # 使用 torch.topk 找到熵值最高的 k 个样本的索引
+    _, action_indices = torch.topk(entropies, k, dim=0)
+
+    return action_indices
+
 # def compute_state_for_har(args, model, train_set, candidate_video_indices, labeled_video_indices=None):
 #     """
 #     为 HAR 主动学习计算 RL 状态。

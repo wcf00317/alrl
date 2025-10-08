@@ -10,6 +10,7 @@ from torchvision.transforms import functional as F_vision
 from data.hmdb import HmdbDataset
 from data.ucf import UcfDataset
 from data.sth import Sthv2Dataset
+from data.kinetics import KineticsDataset
 import numpy as np
 import random
 
@@ -82,7 +83,7 @@ def get_data(
         'hmdb': (HmdbDataset, 'train_videos.txt', 'val_videos.txt'),
         'ucf': (UcfDataset, 'train_videos.txt', 'val_videos.txt'),
         'sthv2': (Sthv2Dataset, 'sthv2_train_list_videos.txt', 'sthv2_val_list_videos.txt'),
-        # 'ucf': (UcfDataset, 'train_videos.txt', 'val_videos.txt')
+        'kinetics': (KineticsDataset, 'train_list.txt', 'val_list.txt')
     }
 
     dataset_name = dataset_name.lower()
@@ -92,6 +93,8 @@ def get_data(
         dataset_name = 'hmdb'
     elif 'sthv2' in dataset_name:
         dataset_name = 'sthv2'
+    elif 'kinetics' in dataset_name:
+        dataset_name = 'kinetics'
     else:
         raise ValueError(f"Unknown dataset: '{dataset_name}'. Supported datasets are 'ucf' or 'hmdb'.")
 

@@ -1,0 +1,74 @@
+# timesformer_configs/kinetics_har_ebm.yaml
+
+# ===================================================================
+#                       通用配置
+# ===================================================================
+dataset: kinetics200
+data_path: ../mini_kinetics
+ckpt_path: ./checkpoints
+exp_name: kinetics200_ebm_timesformer_exp
+seed: 42
+model_type: timesformer
+
+# --- 数据处理 & 模型配置 ---
+train_batch_size: 8   # TimeSformer模型较大，建议使用较小的batch size
+val_batch_size: 4
+workers: 16           # Kinetics数据集较大，建议增加workers
+clip_len: 8           # TimeSformer通常使用8帧输入
+model_cfg_path: ../mmaction2/configs/recognition/timesformer/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb.py
+# --- 预训练权重：建议使用在完整Kinetics-400上预训练的权重 ---
+model_ckpt_path: ../pretrained_checkpoints/timesformer_spaceOnly_8xb8-8x32x1-15e_kinetics400-rgb_20220815-78f05367.pth
+num_classes: 200      # Kinetics-200的类别数
+embed_dim: 768        # TimeSformer-Base的特征维度
+
+# ===================================================================
+#             阶段 1: 特征两端提取法
+# ===================================================================
+initial_labeled_ratio: 0.05
+budget_labels: 8000   # 总标注预算
+num_each_iter: 80     # 每轮选择的样本数
+
+# --- 启用的特征策略 (为EBM提供丰富的特征输入) ---
+use_statistical_features: true
+use_diversity_feature: true
+use_representativeness_feature: true
+use_prediction_margin_feature: true
+use_labeled_distance_feature: true
+use_neighborhood_density_feature: true
+use_temporal_consistency_feature: true
+use_cross_view_consistency_feature: false # 交叉视角需要额外的数据增强
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练
+# ===================================================================
+reward_model_type: ebm
+
+# ===================================================================
+#                       阶段 3: RL智能体训练
+# ===================================================================
+al_algorithm: dqn
+# --- 训练设置 (参考其他TimeSformer微调配置) ---
+optimizer:
+  type: 'SGD'
+  lr: 0.0005
+  momentum: 0.9
+  weight_decay: 0.0001
+  nesterov: True
+epoch_num: 40         # 最终收敛训练的总轮数
+patience: 15
+al_train_epochs: 5   # AL循环中，每次微调的Epoch数
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 40
+    by_epoch: True
+    milestones: [20, 35]
+    gamma: 0.1
+
+# --- DQN 智能体训练参数 ---
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_buffer: 100
+dqn_bs: 80 # DQN批大小应与每轮选择数(num_each_iter)保持一致
+dqn_gamma: 0.99
