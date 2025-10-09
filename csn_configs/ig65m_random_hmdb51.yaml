@@ -1,0 +1,52 @@
+# csn_configs/ig65m_random_hmdb51.yaml
+
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: hmdb51_random_from_ig65m  # 实验名更新
+model_type: csn
+al_algorithm: random             # <-- 核心：指定为随机采样
+
+# 数据处理
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 32
+
+# 训练设置
+train: true
+seed: 42
+optimizer:
+  type: 'SGD'
+  lr: 0.000125
+  momentum: 0.9
+  weight_decay: 0.0001
+epoch_num: 50         # 最终收敛训练的总轮数
+patience: 10
+al_train_epochs: 5   # 每个AL循环中的微调轮数
+
+# 学习率调度器
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 50
+    by_epoch: True
+    milestones: [20, 40]
+    gamma: 0.1
+
+# Active Learning 参数 (参考之前的 hmdb51 random 配置)
+initial_labeled_ratio: 0.05
+budget_labels: 578
+num_each_iter: 20
+
+# MMACTION2 配置
+model_cfg_path: ../mmaction2/configs/recognition/csn/ircsn_ig65m-pretrained-r152_8xb12-32x2x1-58e_kinetics400-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/ircsn_from_scratch_r152_ig65m_20200807-771c4135.pth
+num_classes: 51
+embed_dim: 2048
+
+# 路径加载控制
+checkpointer: true
+test: false
+final_test: false

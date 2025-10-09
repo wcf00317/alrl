@@ -1,0 +1,71 @@
+# csn_configs/ig65m_ebm_hmdb51.yaml
+
+# ===================================================================
+#                       通用配置 (对所有阶段生效)
+# ===================================================================
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: hmdb51_ebm_from_ig65m # 实验名更新
+model_type: csn
+seed: 42
+
+# --- 数据处理 & 模型配置 ---
+train_batch_size: 8
+val_batch_size: 4
+workers: 8
+clip_len: 32
+model_cfg_path: ../mmaction2/configs/recognition/csn/ircsn_ig65m-pretrained-r152_8xb12-32x2x1-58e_kinetics400-rgb.py
+model_ckpt_path: ../pretrained_checkpoints/ircsn_from_scratch_r152_ig65m_20200807-771c4135.pth
+num_classes: 51
+embed_dim: 2048
+
+# ===================================================================
+#             阶段 1: 特征两端提取法
+# ===================================================================
+initial_labeled_ratio: 0.05
+budget_labels: 578
+num_each_iter: 20  # <-- 已按要求修改：每轮选择20个样本
+
+# --- 启用的特征策略 (为EBM生成best/worst对) ---
+use_statistical_features: true
+use_diversity_feature: true
+use_representativeness_feature: true
+use_prediction_margin_feature: true
+use_labeled_distance_feature: true
+use_neighborhood_density_feature: true
+use_temporal_consistency_feature: true
+
+# ===================================================================
+#                       阶段 2: 奖励模型训练
+# ===================================================================
+reward_model_type: ebm # <-- 核心: 指定使用EBM
+
+# ===================================================================
+#                       阶段 3: RL智能体训练
+# ===================================================================
+al_algorithm: dqn
+# --- 训练设置 ---
+optimizer:
+  type: 'SGD'
+  lr: 0.000125
+  momentum: 0.9
+  weight_decay: 0.0001
+epoch_num: 50         # 最终收敛训练的总轮数
+patience: 10          # <-- 已按要求修改
+al_train_epochs: 5    # <-- 已按要求修改：每个AL循环中的微调轮数
+param_scheduler:
+  - type: 'MultiStepLR'
+    begin: 0
+    end: 50
+    by_epoch: True
+    milestones: [20, 40]
+    gamma: 0.1
+
+# --- DQN 智能体训练参数 ---
+lr_dqn: 0.0001
+gamma_scheduler_dqn: 0.99
+rl_pool: 10
+rl_buffer: 100
+dqn_bs: 20 # DQN批大小应与每轮选择数(num_each_iter)保持一致
+dqn_gamma: 0.99

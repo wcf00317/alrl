@@ -43,7 +43,6 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
     patience_counter = 0
     if epochs_to_run is None:
         epochs_to_run = args.epoch_num
-
     for epoch in range(curr_epoch, epochs_to_run):
         print(f'\nEpoch {epoch + 1}/{epochs_to_run}')
         net.train()
@@ -56,7 +55,7 @@ def train_har_classifier(args, curr_epoch, train_loader, net, criterion, optimiz
             #print("Inputs shape before model:", inputs.shape)
             batch_size = inputs.shape[0]
             num_clips = inputs.shape[1]
-            
+
             optimizer.zero_grad()
 
             outputs = net(inputs, return_loss=False)

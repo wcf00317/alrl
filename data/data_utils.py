@@ -236,6 +236,37 @@ def get_data(
             Lambda(lambda x: x.permute(1, 0, 2, 3)),
             Lambda(lambda clip: (clip - mean) / std),
         ])
+    elif model_type == 'csn':
+        print("为 CSN 模型配置数据转换流程 (已修正为 [0, 255] 范围归一化)...")
+
+        # --- 核心修正 1: 使用官方的 [0, 255] 范围的 mean 和 std ---
+        mean = torch.tensor([123.675, 116.28, 103.53]).view(3, 1, 1, 1)
+        std = torch.tensor([58.395, 57.12, 57.375]).view(3, 1, 1, 1)
+
+        # 训练时的数据增强流程
+        train_transform = Compose([
+            # --- 核心修正 2: 所有空间变换直接在 [0, 255] 范围的张量上操作 ---
+            Lambda(lambda clip: resize_short_side(clip, size=256)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'random')),
+            Lambda(lambda clip: flip_clip(clip, flip_ratio=0.5)),
+
+            # 确保张量是浮点类型以进行后续计算，但 *不* 改变其数值范围
+            Lambda(lambda x: x.float()),
+
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),  # TCHW -> CTHW
+
+            # --- 核心修正 3: 在 [0, 255] 范围的张量上直接应用 mean 和 std ---
+            Lambda(lambda clip: (clip - mean) / std)
+        ])
+
+        # 验证/测试时的数据处理流程
+        val_transform = Compose([
+            Lambda(lambda clip: resize_short_side(clip, size=256)),
+            Lambda(lambda clip: crop_clip(clip, 224, 'center')),
+            Lambda(lambda x: x.float()),
+            Lambda(lambda x: x.permute(1, 0, 2, 3)),  # TCHW -> CTHW
+            Lambda(lambda clip: (clip - mean) / std),
+        ])
     else:
         # 如果不是支持的模型，则明确报错
         raise ValueError(f"不支持的模型类型 '{model_type}'。请在 data_utils.py 中为其添加数据处理流程。")
