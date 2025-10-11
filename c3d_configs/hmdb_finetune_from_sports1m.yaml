@@ -1,0 +1,32 @@
+# c3d_configs/hmdb_finetune_from_sports1m.yaml
+
+# 基本信息
+dataset: hmdb51
+data_path: ../hmdb51
+ckpt_path: ./checkpoints
+exp_name: hmdb_finetune_from_sports1m
+train: true
+seed: 42
+
+# 数据处理
+train_batch_size: 32
+val_batch_size: 8
+workers: 8
+clip_len: 16
+
+# 训练设置
+optimizer: SGD
+lr: 0.0001 # 微调使用一个较小的学习率
+weight_decay: 0.0005
+momentum: 0.9
+gamma: 0.95
+epoch_num: 100 # 微调通常需要较多的轮数以充分收敛
+patience: 100 # 设置较高的耐心值
+
+# MMACTION2 配置
+model_type: c3d
+model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
+# **关键**: 指向您指定的Sports-1M预训练模型
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
+num_classes: 51
+embed_dim: 4096

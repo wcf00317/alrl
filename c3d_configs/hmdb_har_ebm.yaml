@@ -15,7 +15,7 @@ val_batch_size: 8
 workers: 8
 clip_len: 16
 model_cfg_path: ../mmaction2/configs/recognition/c3d/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb.py
-model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m-pretrained_8xb30-16x1x1-45e_ucf101-rgb_20220811-31723200.pth
+model_ckpt_path: ../pretrained_checkpoints/c3d_sports1m_pretrain_20201016-dcc47ddc.pth
 num_classes: 51
 embed_dim: 4096
 
@@ -25,7 +25,7 @@ embed_dim: 4096
 # --- AL预算和每轮选择的样本数 ---
 initial_labeled_ratio: 0.05
 budget_labels: 578
-num_each_iter: 10
+num_each_iter: 20
 
 # --- 启用的特征策略 (这些将用于生成best/worst对) ---
 use_statistical_features: false
@@ -35,7 +35,6 @@ use_prediction_margin_feature: false
 use_labeled_distance_feature: false
 use_neighborhood_density_feature: false
 use_temporal_consistency_feature: false
-use_cross_view_consistency_feature: false
 
 # ===================================================================
 #                       阶段 2: 奖励模型训练
@@ -62,5 +61,5 @@ lr_dqn: 0.0001
 gamma_scheduler_dqn: 0.99
 rl_pool: 10
 rl_buffer: 100
-dqn_bs: 5
+dqn_bs: 20
 dqn_gamma: 0.99

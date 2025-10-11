@@ -615,6 +615,12 @@ def select_action_for_har(args, policy_net, all_state, steps_done, test=False):
                     clip_batch = state_pool[i:i + batch_size].cuda()  # [B, D]
                     # repeat subset embedding 为 clip_batch 的 batch size
                     subset_batch = state_subset.unsqueeze(0).repeat(clip_batch.size(0), 1, 1).cuda()  # [B, M, D]
+
+                    # 【消融实验修改】将 subset 替换为零向量，移除历史信息,使用后记得删除！
+                    print("--- Ablation Study: Historical information (subset) is zeroed out before policy net. ---")
+                    subset_batch = torch.zeros_like(subset_batch)
+
+
                     q_val = policy_net(clip_batch, subset_batch).cpu()  # 输出 [B, 1]
                     q_vals.append(q_val)
                 q_vals = torch.cat(q_vals, dim=0).squeeze()  # 从 [N, 1] 变为 [N]
